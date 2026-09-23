@@ -2,7 +2,7 @@ import AppKit
 
 /// Click-through layer over all screens that draws hint labels or a highlight box at AX-coordinate rects.
 final class Overlay {
-    struct Mark { let frame: CGRect; let label: String?; let typed: Int }   // frame in AX coords (top-left origin)
+    struct Mark { let frame: CGRect; let label: String?; let typed: Int; var alt = false }   // frame in AX coords (top-left origin); alt = right-click mode
 
     private var windows: [NSWindow] = []
 
@@ -44,7 +44,7 @@ private final class MarksView: NSView {
             let global = NSRect(x: m.frame.minX, y: primary.frame.height - m.frame.maxY, width: m.frame.width, height: m.frame.height)
             let r = global.offsetBy(dx: -win.frame.minX, dy: -win.frame.minY)
             guard r.intersects(bounds) else { continue }
-            if let label = m.label { drawLabel(label, typed: m.typed, at: r) } else { drawHighlight(r) }
+            if let label = m.label { drawLabel(label, typed: m.typed, alt: m.alt, at: r) } else { drawHighlight(r) }
         }
     }
 
@@ -54,14 +54,15 @@ private final class MarksView: NSView {
         NSColor.controlAccentColor.setStroke(); p.lineWidth = 3; p.stroke()
     }
 
-    private func drawLabel(_ label: String, typed: Int, at r: NSRect) {
+    private func drawLabel(_ label: String, typed: Int, alt: Bool, at r: NSRect) {
         let font = NSFont.monospacedSystemFont(ofSize: 12, weight: .bold)
         let s = NSMutableAttributedString(string: label, attributes: [.font: font, .foregroundColor: NSColor.black])
         s.addAttribute(.foregroundColor, value: NSColor.black.withAlphaComponent(0.35), range: NSRange(location: 0, length: min(typed, label.count)))
         let size = s.size()
         let box = NSRect(x: r.minX, y: r.maxY - size.height - 2, width: size.width + 8, height: size.height + 2)
         let p = NSBezierPath(roundedRect: box, xRadius: 4, yRadius: 4)
-        NSColor(calibratedRed: 1, green: 0.85, blue: 0.2, alpha: 0.95).setFill(); p.fill()
+        (alt ? NSColor(calibratedRed: 0.55, green: 0.8, blue: 1, alpha: 0.95)      // blue = right-click
+             : NSColor(calibratedRed: 1, green: 0.85, blue: 0.2, alpha: 0.95)).setFill(); p.fill()
         NSColor.black.withAlphaComponent(0.5).setStroke(); p.lineWidth = 1; p.stroke()
         s.draw(at: NSPoint(x: box.minX + 4, y: box.minY + 1))
     }
@@ -72,6 +73,7 @@ final class HintMode {
     private let overlay = Overlay()
     private var items: [(label: String, element: ScreenElement)] = []
     private var typed = ""
+    private var rightClick = false   // Tab toggles: next completed label right-clicks
     private var pid: pid_t = 0
     var active: Bool { !items.isEmpty }
     var onKeysCaptured: (Bool) -> Void = { _ in }   // tells the key tap to route keys here
@@ -90,6 +92,7 @@ final class HintMode {
                 let labels = Self.labels(els.count)
                 self.items = zip(labels, els).map { ($0, $1) }
                 self.typed = ""
+                self.rightClick = false
                 self.render()
                 self.onKeysCaptured(true)
             }
@@ -106,6 +109,7 @@ final class HintMode {
     /// Returns true when the key was used. Esc/any non-letter ends label mode.
     func handle(keyCode: Int, mods: Mods) -> Bool {
         if keyCode == 51 { typed = String(typed.dropLast()); render(); return true }   // ⌫
+        if keyCode == 48 { rightClick.toggle(); render(); return true }                // ⇥ = right-click mode
         guard mods.isEmpty, let k = Keys.names[keyCode], k.count == 1, let c = k.first, c.isLetter else { stop(); return true }
         let next = typed + String(c)
         let matches = items.filter { $0.label.hasPrefix(next) }
@@ -113,8 +117,9 @@ final class HintMode {
         typed = next
         if matches.count == 1, matches[0].label == next {
             let e = matches[0].element
+            let right = rightClick
             stop()
-            ElementScanner.perform(e)
+            right ? ElementScanner.showMenu(e) : ElementScanner.perform(e)
         } else {
             render()
         }
@@ -122,7 +127,8 @@ final class HintMode {
     }
 
     private func render() {
-        overlay.show(items.filter { $0.label.hasPrefix(typed) }.map { Overlay.Mark(frame: $0.element.frame, label: $0.label, typed: typed.count) })
+        overlay.show(items.filter { $0.label.hasPrefix(typed) }
+            .map { Overlay.Mark(frame: $0.element.frame, label: $0.label, typed: typed.count, alt: rightClick) })
     }
 
     /// Same-length labels so none is a prefix of another; home row first.

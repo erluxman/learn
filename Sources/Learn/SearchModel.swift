@@ -97,6 +97,19 @@ final class SearchModel: ObservableObject {
 
     // MARK: On-screen elements
 
+    /// Tab on a highlighted on-screen element: open its right-click menu in the app.
+    func contextMenu() {
+        guard currentApp != nil, selection < shortcuts.count else { return }
+        let s = shortcuts[selection]
+        guard let el = screen.elements[s.id] else {
+            notice = s.path.first == ElementScanner.marker ? "\(s.title) isn't on screen right now"
+                                                           : "Right-click works on on-screen items (tagged “screen”)"
+            return
+        }
+        handFocus(to: currentApp!)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { ElementScanner.showMenu(el) }
+    }
+
     private func scanScreen(appID: String, pid: pid_t) {
         DispatchQueue.global(qos: .userInitiated).async {
             let els = ElementScanner.scan(pid: pid)
@@ -110,6 +123,17 @@ final class SearchModel: ObservableObject {
                 self.screenRows = rows
                 if self.currentApp?.id == appID { self.recompute(keepSelection: true) }
             }
+        }
+    }
+
+    /// Close the panel and give activation straight to `app` (Learn is still active, so macOS allows it).
+    private func handFocus(to app: AppEntry) {
+        if let running = app.runningApp {
+            NSApp.yieldActivation(to: running)
+            running.activate()
+            onClose(false)
+        } else {
+            onClose(true)
         }
     }
 
@@ -134,7 +158,8 @@ final class SearchModel: ObservableObject {
             case LearnActions.group, ElementScanner.marker:
                 let el = screen.elements[s.id]
                 let pid = app.runningApp?.processIdentifier
-                onClose(true)   // focus back to the app, then act in it
+                Debug.log("activate row '\(s.title)' path=\(s.path) el=\(el.map { "\($0.roleName) web=\($0.web) frame=\($0.frame)" } ?? "nil") screenApp=\(screen.appID) app=\(app.id)")
+                handFocus(to: app)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                     if s.path.first == LearnActions.group { LearnActions.run(s.path) }
                     else if let el { ElementScanner.perform(el) }

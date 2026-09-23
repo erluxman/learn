@@ -123,7 +123,7 @@ struct SearchView: View {
         HStack {
             Text(model.notice ?? model.info)
             Spacer()
-            Text(model.currentApp == nil ? "↑↓ select  ↩ open  ⎋ close" : "↩ run  ⌘↩ set shortcut  ⌘R refresh  ⌫/⎋ all apps")
+            Text(model.currentApp == nil ? "↑↓ select  ↩ open  ⎋ close" : "↩ run  ⇥ right-click  ⌘↩ set shortcut  ⌘R refresh  ⌫/⎋ apps")
         }
         .font(.system(size: 11)).foregroundStyle(.secondary)
         .padding(.horizontal, 16).padding(.vertical, 7)

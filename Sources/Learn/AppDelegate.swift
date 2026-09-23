@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let store = ShortcutStore.shared
     private let keyTap = KeyTap()
     private let hints = HintMode()
+    private let menuSearch = MenuSearch()
     private var bag = Set<AnyCancellable>()
     private var lastApp: NSRunningApplication?   // last app the user focused (not Learn)
 
@@ -72,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             case kVK_UpArrow: self.model.move(-1)
             case kVK_Return, kVK_ANSI_KeypadEnter: self.model.activate()
             case kVK_Tab where self.model.currentApp == nil: self.model.activate()
+            case kVK_Tab: self.model.contextMenu()
             case kVK_Escape: self.model.escape()
             case kVK_Delete where self.model.query.isEmpty && self.model.currentApp != nil: self.model.back()
             case kVK_ANSI_R where cmd: self.model.refresh()
@@ -106,6 +108,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self else { return }
             self.keyTap.interceptor = on ? { [weak self] code, mods in self?.hints.handle(keyCode: code, mods: mods) ?? false } : nil
         }
+        menuSearch.onKeysCaptured = { [weak self] on in
+            guard let self else { return }
+            self.keyTap.interceptor = on ? { [weak self] code, mods in self?.menuSearch.handle(keyCode: code, mods: mods) ?? false } : nil
+        }
+        ElementScanner.onMenuOpened = { [weak self] pid, point in self?.menuSearch.start(pid: pid, near: point) }
         LearnActions.run = { [weak self] path in
             guard let self, path == LearnActions.labels else { return }
             if self.panel.isVisible {   // panel open: close it, return focus to the app, then label that app

@@ -7,6 +7,7 @@ struct ScreenElement {
     let roleName: String   // "Button", "Row", …
     let text: String       // what it says ("" for unlabeled icons)
     let frame: CGRect      // AX global coords (top-left origin)
+    var web = false        // inside an AXWebArea (Electron apps, browsers): AX press is unreliable → real click
 
     /// Shortcut-shaped row for Learn's list; path doubles as the locator for bindings.
     var shortcut: Shortcut { Shortcut(path: [ElementScanner.marker, roleName, text], key: "", keyCode: nil, mods: []) }
@@ -15,6 +16,8 @@ struct ScreenElement {
 /// Reads visible, clickable elements from an app's windows via Accessibility, and clicks them.
 enum ElementScanner {
     static let marker = "On screen"
+    /// Called after a context menu was opened (pid, element centre) so Learn can search inside it.
+    static var onMenuOpened: (pid_t, CGPoint) -> Void = { _, _ in }
 
     private static let roles: [String: String] = [
         "AXButton": "Button", "AXLink": "Link", "AXCheckBox": "Checkbox", "AXRadioButton": "Tab/Option",
@@ -44,12 +47,12 @@ enum ElementScanner {
         var visited = 0
         for w in windows.prefix(4) {
             guard let wf = frame(w) else { continue }
-            walk(w, clip: wf, depth: 0, inRow: false, out: &out, visited: &visited, limit: limit, deadline: deadline)
+            walk(w, clip: wf, depth: 0, inRow: false, inWeb: false, out: &out, visited: &visited, limit: limit, deadline: deadline)
         }
         return out
     }
 
-    private static func walk(_ el: AXUIElement, clip: CGRect, depth: Int, inRow: Bool, out: inout [ScreenElement],
+    private static func walk(_ el: AXUIElement, clip: CGRect, depth: Int, inRow: Bool, inWeb: Bool, out: inout [ScreenElement],
                              visited: inout Int, limit: Int, deadline: Date) {
         guard depth < 40, visited < limit, Date() < deadline else { return }
         visited += 1
@@ -57,6 +60,7 @@ enum ElementScanner {
         guard AXUIElementCopyMultipleAttributeValues(el, attrs, [], &raw) == .success,
               let v = raw as? [AnyObject], v.count == 9 else { return }
         let role = v[0] as? String ?? ""
+        let inWeb = inWeb || role == "AXWebArea"
         let f = rect(v[6], v[7])
         var clip = clip
         if let f, f.width > 0, f.height > 0 {   // 0×0 containers (common in Electron) don't clip
@@ -74,10 +78,10 @@ enum ElementScanner {
             if text.isEmpty, role == "AXRow" || role == "AXCell" || role == "AXLink" { text = innerText(el, depth: 0) }
             let sub = v[1] as? String
             out.append(ScreenElement(ref: el, role: role, roleName: sub == "AXSearchField" ? "Search Field" : name,
-                                     text: String(text.prefix(80)), frame: f.intersection(clip)))
+                                     text: String(text.prefix(80)), frame: f.intersection(clip), web: inWeb))
             if role != "AXRow" && role != "AXCell" && role != "AXGroup" { return }   // leaf-like controls
         }
-        for k in kids { walk(k, clip: clip, depth: depth + 1, inRow: inRow || role == "AXRow", out: &out, visited: &visited, limit: limit, deadline: deadline) }
+        for k in kids { walk(k, clip: clip, depth: depth + 1, inRow: inRow || role == "AXRow", inWeb: inWeb, out: &out, visited: &visited, limit: limit, deadline: deadline) }
     }
 
     /// First bits of static text inside a row/cell/link, e.g. a file name in Finder's list.
@@ -96,7 +100,17 @@ enum ElementScanner {
     // MARK: Actions
 
     /// Text fields get focus, rows get selected, everything else is pressed; last resort is a real click.
+    /// Web content (Electron/browsers) reports AX success without reacting, so it always gets a real click.
     static func perform(_ e: ScreenElement) {
+        Debug.log("perform \(e.roleName) '\(e.text.prefix(40))' web=\(e.web) frame=\(e.frame) front=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?")")
+        if e.role == "AXLink", let url = linkURL(e) { return openLink(url, from: e) }
+        if e.web {
+            DispatchQueue.global(qos: .userInteractive).async {
+                bringToFront(e)
+                click(at: CGPoint(x: e.frame.midX, y: e.frame.midY))
+            }
+            return
+        }
         var names: CFArray?
         AXUIElementCopyActionNames(e.ref, &names)
         let actions = names as? [String] ?? []
@@ -108,6 +122,24 @@ enum ElementScanner {
         click(at: CGPoint(x: e.frame.midX, y: e.frame.midY))
     }
 
+    /// Opens the element's context menu: its own AXShowMenu action, else a real right-click at its centre.
+    /// Off the main thread: AXShowMenu can block until the menu closes, which would stall Learn's key tap.
+    static func showMenu(_ e: ScreenElement) {
+        var pid: pid_t = 0
+        AXUIElementGetPid(e.ref, &pid)
+        let centre = CGPoint(x: e.frame.midX, y: e.frame.midY)
+        DispatchQueue.main.async { onMenuOpened(pid, centre) }   // starts looking for the menu (polls ~1.5s)
+        DispatchQueue.global(qos: .userInteractive).async {
+            var names: CFArray?
+            AXUIElementCopyActionNames(e.ref, &names)
+            if e.web || !((names as? [String] ?? []).contains("AXShowMenu")
+                 && AXUIElementPerformAction(e.ref, "AXShowMenu" as CFString) == .success) {
+                bringToFront(e)
+                click(at: centre, right: true)
+            }
+        }
+    }
+
     /// For bindings: find by role + text in the frontmost app now, then perform.
     static func pressMatching(path: [String], pid: pid_t) -> Bool {
         guard path.count == 3 else { return false }
@@ -116,13 +148,60 @@ enum ElementScanner {
         return true
     }
 
-    /// Real mouse click, then put the pointer back where it was.
-    static func click(at p: CGPoint) {
+    /// Real mouse click, then put the pointer back where it was. Shaped like a hardware click (move → down → up,
+    /// click count 1) because Chromium/Electron ignore synthetic clicks without a click count.
+    static func click(at p: CGPoint, right: Bool = false) {
         let back = CGEvent(source: nil)?.location
-        for type in [CGEventType.leftMouseDown, .leftMouseUp] {
-            CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: p, mouseButton: .left)?.post(tap: .cghidEventTap)
+        let src = CGEventSource(stateID: .hidSystemState)
+        let button: CGMouseButton = right ? .right : .left
+        let (down, up): (CGEventType, CGEventType) = right ? (.rightMouseDown, .rightMouseUp) : (.leftMouseDown, .leftMouseUp)
+        func post(_ type: CGEventType) {
+            let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: p, mouseButton: button)
+            e?.setIntegerValueField(.mouseEventClickState, value: 1)
+            e?.post(tap: .cghidEventTap)
         }
-        if let back { DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { CGWarpMouseCursorPosition(back) } }
+        Debug.log("click \(right ? "right" : "left") at \(p) front=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?")")
+        post(.mouseMoved)
+        usleep(30_000)
+        post(down)
+        usleep(40_000)
+        post(up)
+        if let back, !right {   // keep the pointer on a context menu so it isn't dismissed by the move
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { CGWarpMouseCursorPosition(back) }
+        }
+    }
+
+    static func linkURL(_ e: ScreenElement) -> URL? {
+        guard let url: URL = value(e.ref, "AXURL"), let scheme = url.scheme, ["http", "https", "file", "mailto"].contains(scheme)
+        else { return nil }
+        return url
+    }
+
+    /// Opens a link's address in a new tab of the browser that shows it; non-browsers (Slack…) use the default browser.
+    static func openLink(_ url: URL, from e: ScreenElement) {
+        var pid: pid_t = 0
+        AXUIElementGetPid(e.ref, &pid)
+        Debug.log("openLink \(url.absoluteString.prefix(80))")
+        let owner = NSRunningApplication(processIdentifier: pid)?.bundleURL
+        let browsers = NSWorkspace.shared.urlsForApplications(toOpen: URL(string: "https://example.com")!)
+        if let owner, browsers.contains(where: { $0.standardizedFileURL == owner.standardizedFileURL }) {
+            NSWorkspace.shared.open([url], withApplicationAt: owner, configuration: NSWorkspace.OpenConfiguration())
+        } else {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    /// Real clicks only reach the page if the app is already active: Chromium/Electron spend the first
+    /// click on an inactive window just activating it. Activate and wait (≤1s). Call off the main thread.
+    static func bringToFront(_ e: ScreenElement) {
+        var pid: pid_t = 0
+        AXUIElementGetPid(e.ref, &pid)
+        func front() -> Bool { NSWorkspace.shared.frontmostApplication?.processIdentifier == pid }
+        guard !front(), let app = NSRunningApplication(processIdentifier: pid) else { Debug.log("bringToFront: already front"); return }
+        DispatchQueue.main.async { app.activate() }
+        for _ in 0..<20 where !front() { usleep(50_000) }
+        usleep(120_000)   // let the window become key
+        Debug.log("bringToFront: front=\(front())")
     }
 
     // MARK: AX helpers
