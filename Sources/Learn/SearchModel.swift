@@ -6,7 +6,8 @@ final class SearchModel: ObservableObject {
 
     @Published var mode: Mode = .apps
     @Published var query = "" { didSet { if query != oldValue { notice = nil; recompute() } } }
-    @Published var selection = 0
+    @Published var selection = 0 { didSet { updateHighlight() } }
+    @Published private(set) var highlight: CGRect?   // on-screen element under the list selection
     @Published private(set) var apps: [AppEntry] = []
     @Published private(set) var shortcuts: [Shortcut] = []
     @Published private(set) var scanning = false
@@ -23,6 +24,8 @@ final class SearchModel: ObservableObject {
     private var allApps: [AppEntry] = AppCatalog.load()
     private var preferred: String?   // app that was frontmost before the panel opened
     private var bag: AnyCancellable?
+    private var screen: (appID: String, elements: [String: ScreenElement]) = ("", [:])   // by row id
+    private var screenRows: [Shortcut] = []
 
     init() {
         bag = NotificationCenter.default.publisher(for: ShortcutStore.changed)
@@ -45,7 +48,9 @@ final class SearchModel: ObservableObject {
         notice = nil
         trusted = AXIsProcessTrusted()
         query = ""
+        screen = ("", [:]); screenRows = []
         if let f = frontmost, let id = f.bundleIdentifier, let url = f.bundleURL {
+            scanScreen(appID: id, pid: f.processIdentifier)
             open(allApps.first { $0.id == id } ?? AppEntry(id: id, name: f.localizedName ?? id, url: url))
         } else {
             mode = .apps
@@ -61,16 +66,19 @@ final class SearchModel: ObservableObject {
     func recompute(keepSelection: Bool = false) {
         if let app = currentApp {
             let entry = ShortcutStore.shared.get(app.id)
-            let list = Self.withBindings(entry?.shortcuts ?? [], app: app.id)
+            let learn = LearnActions.all.map { Shortcut(path: $0, key: "", keyCode: nil, mods: []) }
+            let onScreen = screen.appID == app.id ? screenRows : []
+            let list = Self.withBindings(learn + onScreen + (entry?.shortcuts ?? []), app: app.id)
             shortcuts = query.isEmpty ? list
-                : list.compactMap { s in Fuzzy.score(query, s.searchText).map { (s, $0) } }
-                    .sorted { $0.1 > $1.1 }.map(\.0)
+                : list.compactMap { s in Fuzzy.rank(query, title: s.title, context: s.searchText, keys: s.display).map { (s, $0) } }
+                    .sorted { ($0.1, -$0.0.title.count, -$0.0.path.count) > ($1.1, -$1.0.title.count, -$1.0.path.count) }
+                    .map(\.0)
             scanning = Scanner.shared.busy.contains(app.id)
             if scanning { info = "Scanning \(app.name)…" }
             else if let entry {
                 let ago = RelativeDateTimeFormatter().localizedString(for: entry.scannedAt, relativeTo: Date())
                 let keyed = list.filter(\.hasKey).count
-                info = "\(keyed) shortcuts · \(list.count - keyed) menu commands · scanned \(ago)\(entry.stale ? " · outdated" : "")"
+                info = "\(keyed) shortcuts · \(list.count - keyed) commands · \(onScreen.count) on screen · scanned \(ago)\(entry.stale ? " · outdated" : "")"
             } else { info = "No shortcuts found — press ⌘R to scan" }
         } else {
             let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
@@ -78,13 +86,39 @@ final class SearchModel: ObservableObject {
             if query.isEmpty {
                 apps = allApps.sorted { (rank($0), $1.name.lowercased()) > (rank($1), $0.name.lowercased()) }
             } else {
-                apps = allApps.compactMap { a in Fuzzy.score(query, a.name.lowercased()).map { (a, $0 * 10 + rank(a)) } }
-                    .sorted { $0.1 > $1.1 }.map(\.0)
+                apps = allApps.compactMap { a in Fuzzy.rank(query, title: a.name).map { (a, $0 * 10 + rank(a)) } }
+                    .sorted { ($0.1, -$0.0.name.count) > ($1.1, -$1.0.name.count) }.map(\.0)
             }
             info = "\(apps.count) apps · ↩ show shortcuts"
         }
         if !keepSelection || selection >= count { selection = 0 }
+        updateHighlight()
     }
+
+    // MARK: On-screen elements
+
+    private func scanScreen(appID: String, pid: pid_t) {
+        DispatchQueue.global(qos: .userInitiated).async {
+            let els = ElementScanner.scan(pid: pid)
+            DispatchQueue.main.async {
+                var byID: [String: ScreenElement] = [:], rows: [Shortcut] = []
+                for e in els where !e.text.isEmpty {   // unlabeled icons: reachable via label mode only
+                    let s = e.shortcut
+                    if byID[s.id] == nil { byID[s.id] = e; rows.append(s) }
+                }
+                self.screen = (appID, byID)
+                self.screenRows = rows
+                if self.currentApp?.id == appID { self.recompute(keepSelection: true) }
+            }
+        }
+    }
+
+    private func updateHighlight() {
+        let h = currentApp != nil && selection < shortcuts.count ? screen.elements[shortcuts[selection].id]?.frame : nil
+        if h != highlight { highlight = h }
+    }
+
+    func clearScreen() { screen = ("", [:]); screenRows = []; highlight = nil }
 
     func move(_ d: Int) {
         guard count > 0 else { return }
@@ -96,8 +130,20 @@ final class SearchModel: ObservableObject {
         guard selection < count else { return }
         if let app = currentApp {
             let s = shortcuts[selection]
-            onClose(false)   // Executor activates the target app itself
-            Executor.run(s, in: app)
+            switch s.path.first {
+            case LearnActions.group, ElementScanner.marker:
+                let el = screen.elements[s.id]
+                let pid = app.runningApp?.processIdentifier
+                onClose(true)   // focus back to the app, then act in it
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                    if s.path.first == LearnActions.group { LearnActions.run(s.path) }
+                    else if let el { ElementScanner.perform(el) }
+                    else if let pid { DispatchQueue.global().async { _ = ElementScanner.pressMatching(path: s.path, pid: pid) } }
+                }
+            default:
+                onClose(false)   // Executor activates the target app itself
+                Executor.run(s, in: app)
+            }
         } else {
             open(apps[selection])
         }
@@ -155,14 +201,15 @@ final class SearchModel: ObservableObject {
     /// Saves the recorded combo as a Learn binding (works immediately); reset removes it.
     func saveRecording(reset: Bool = false) {
         guard let app = currentApp, let item = recording else { return }
+        let scope = item.path.first == LearnActions.group ? Bindings.global : app.id
         if reset {
-            Bindings.shared.remove(app.id, path: item.path)
+            Bindings.shared.remove(scope, path: item.path)
             notice = "Removed custom shortcut for \(item.title)"
         } else {
             guard let k = recorded else { NSSound.beep(); return }
             let b = Binding(path: item.path, keyCode: k.code, mods: k.mods)
-            Bindings.shared.set(app.id, b)
-            notice = "\(b.shortcut.display) now runs \(item.title) in \(app.name)"
+            Bindings.shared.set(scope, b)
+            notice = "\(b.shortcut.display) now runs \(item.title)\(scope == Bindings.global ? " everywhere" : " in \(app.name)")"
         }
         cancelRecording()
         recompute(keepSelection: true)
@@ -171,13 +218,19 @@ final class SearchModel: ObservableObject {
     /// Menu items with Learn bindings applied on top (bindings for vanished items are kept visible).
     static func withBindings(_ list: [Shortcut], app: String) -> [Shortcut] {
         let binds = Bindings.shared.all(app)
-        guard !binds.isEmpty else { return list }
+        let userGlobal = Bindings.shared.all(Bindings.global)
         func custom(_ b: Binding, _ orig: Shortcut?) -> Shortcut {
             var s = b.shortcut
             s.original = orig.map { $0.hasKey ? $0.display : "" } ?? ""
             return s
         }
-        var out = list.map { s in Bindings.shared.get(app, path: s.path).map { custom($0, s) } ?? s }
+        var out = list.map { s -> Shortcut in
+            if s.path.first == LearnActions.group {   // Learn command: user binding, else built-in default
+                if let b = userGlobal.first(where: { $0.path == s.path }) { return custom(b, s) }
+                return LearnActions.defaults.first { $0.path == s.path }?.shortcut ?? s
+            }
+            return Bindings.shared.get(app, path: s.path).map { custom($0, s) } ?? s
+        }
         let paths = Set(list.map(\.path))
         out += binds.filter { !paths.contains($0.path) }.map { custom($0, nil) }
         return out

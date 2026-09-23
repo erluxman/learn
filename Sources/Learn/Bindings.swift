@@ -10,8 +10,20 @@ struct Binding: Codable, Hashable {
     var shortcut: Shortcut { Shortcut(path: path, key: Keys.names[keyCode] ?? "?", keyCode: keyCode, mods: mods) }
 }
 
+/// Learn's own commands. Listed in every app's shortcut list, bound globally (scope "*").
+enum LearnActions {
+    static let group = "Learn"
+    static let labels = [group, "Label clickable items on screen"]
+    static let all: [[String]] = [labels]
+    /// Built-in combos until the user rebinds them (⌘↩ on the item; ⌫ there restores these).
+    static let defaults: [Binding] = [Binding(path: labels, keyCode: 49, mods: [.cmd, .shift])]   // ⌘⇧Space
+    static var run: ([String]) -> Void = { _ in }
+}
+
 /// Main-thread only. Stored in ~/Library/Application Support/Learn/bindings.json.
+/// Keys are bundle ids; "*" holds global bindings (Learn's own commands).
 final class Bindings {
+    static let global = "*"
     static let shared = Bindings()
 
     private let file = ShortcutStore.shared.dir.deletingLastPathComponent().appendingPathComponent("bindings.json")
@@ -25,7 +37,14 @@ final class Bindings {
     func get(_ app: String, path: [String]) -> Binding? { byApp[app]?.first { $0.path == path } }
 
     func match(_ app: String, keyCode: Int, mods: Mods) -> Binding? {
-        byApp[app]?.first { $0.keyCode == keyCode && $0.mods == mods }
+        func hit(_ list: [Binding]) -> Binding? { list.first { $0.keyCode == keyCode && $0.mods == mods } }
+        return hit(all(app)) ?? hit(globals)
+    }
+
+    /// Global bindings, with Learn's defaults filling in for commands the user hasn't rebound.
+    var globals: [Binding] {
+        let user = all(Self.global)
+        return user + LearnActions.defaults.filter { d in !user.contains { $0.path == d.path } }
     }
 
     /// One binding per menu item and per combo within an app.
@@ -50,6 +69,10 @@ final class Bindings {
 /// Global keyDown tap: bound combo in the frontmost app → swallow it and press the menu item.
 final class KeyTap {
     private var tap: CFMachPort?
+    /// When set (label mode), every keyDown goes here instead of the frontmost app.
+    var interceptor: ((Int, Mods) -> Bool)?
+    /// True while Learn's recorder is open: keys must reach the recorder untouched.
+    var suspended: () -> Bool = { false }
     private let queue = DispatchQueue(label: "learn.press", qos: .userInteractive)
 
     @discardableResult
@@ -72,8 +95,7 @@ final class KeyTap {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return pass
         }
-        guard type == .keyDown, let app = NSWorkspace.shared.frontmostApplication,
-              let id = app.bundleIdentifier, id != Bundle.main.bundleIdentifier else { return pass }
+        guard type == .keyDown, !suspended() else { return pass }
         let f = e.flags
         var mods: Mods = []
         if f.contains(.maskCommand) { mods.insert(.cmd) }
@@ -81,10 +103,20 @@ final class KeyTap {
         if f.contains(.maskAlternate) { mods.insert(.opt) }
         if f.contains(.maskControl) { mods.insert(.ctrl) }
         let code = Int(e.getIntegerValueField(.keyboardEventKeycode))
-        guard let b = Bindings.shared.match(id, keyCode: code, mods: mods) else { return pass }
-        if e.getIntegerValueField(.keyboardEventAutorepeat) == 0 {
+        let isRepeat = e.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        if let interceptor { return isRepeat || interceptor(code, mods) ? nil : pass }
+        guard let app = NSWorkspace.shared.frontmostApplication, let id = app.bundleIdentifier else { return pass }
+        let mine = id == Bundle.main.bundleIdentifier   // Learn's panel: only global commands apply
+        guard let b = Bindings.shared.match(mine ? "" : id, keyCode: code, mods: mods) else { return pass }
+        if !isRepeat {
             let pid = app.processIdentifier
-            queue.async { if !MenuScanner.press(path: b.path, pid: pid) { DispatchQueue.main.async { NSSound.beep() } } }
+            switch b.path.first {
+            case LearnActions.group: DispatchQueue.main.async { LearnActions.run(b.path) }
+            case ElementScanner.marker:
+                queue.async { if !ElementScanner.pressMatching(path: b.path, pid: pid) { DispatchQueue.main.async { NSSound.beep() } } }
+            default:
+                queue.async { if !MenuScanner.press(path: b.path, pid: pid) { DispatchQueue.main.async { NSSound.beep() } } }
+            }
         }
         return nil
     }

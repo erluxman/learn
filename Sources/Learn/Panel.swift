@@ -32,8 +32,11 @@ final class Panel: NSPanel, NSWindowDelegate {
     }
 
     /// Hide the app too, so focus returns to the app the user was in (like Spotlight).
+    var onDismiss: () -> Void = {}
+
     func dismiss(restoreFocus: Bool = true) {
         orderOut(nil)
+        onDismiss()
         if restoreFocus && NSApp.isActive { NSApp.hide(nil) }
     }
 

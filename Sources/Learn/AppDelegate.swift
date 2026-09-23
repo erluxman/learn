@@ -1,6 +1,7 @@
 import AppKit
 import Carbon
 import ServiceManagement
+import Combine
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model = SearchModel()
@@ -12,13 +13,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var timer: Timer?
     private let store = ShortcutStore.shared
     private let keyTap = KeyTap()
+    private let hints = HintMode()
+    private var bag = Set<AnyCancellable>()
     private var lastApp: NSRunningApplication?   // last app the user focused (not Learn)
 
     func applicationDidFinishLaunching(_ note: Notification) {
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(opts)
 
-        model.onClose = { [weak self] in self?.panel.dismiss(restoreFocus: $0) }
+        model.onClose = { [weak self] in
+            self?.panel.dismiss(restoreFocus: $0)
+            self?.model.clearScreen()
+        }
+        installLearnActions()
+        panel.onDismiss = { [weak self] in self?.hints.highlight(nil) }
         hotKey = HotKey(keyCode: kVK_Space, carbonMods: optionKey) { [weak self] in self?.toggle() }
         installKeyMonitor()
         installStatusItem()
@@ -89,6 +97,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case kVK_Delete where plain: model.saveRecording(reset: true)
         default: model.record(code: Int(e.keyCode), mods: mods)
         }
+    }
+
+    /// Learn's own commands (searchable in every app's list, bindable with ⌘↩) and label mode wiring.
+    private func installLearnActions() {
+        keyTap.suspended = { [weak self] in self?.model.recording != nil }
+        hints.onKeysCaptured = { [weak self] on in
+            guard let self else { return }
+            self.keyTap.interceptor = on ? { [weak self] code, mods in self?.hints.handle(keyCode: code, mods: mods) ?? false } : nil
+        }
+        LearnActions.run = { [weak self] path in
+            guard let self, path == LearnActions.labels else { return }
+            if self.panel.isVisible {   // panel open: close it, return focus to the app, then label that app
+                self.panel.dismiss()
+                self.model.clearScreen()
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { self.hints.start() }
+            } else {
+                self.hints.toggle()
+            }
+        }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didActivateApplicationNotification,
+                                                          object: nil, queue: .main) { [weak self] _ in
+            if self?.hints.active == true { self?.hints.stop() }
+        }
+        NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
+            if self?.hints.active == true { self?.hints.stop() }
+        }
+        model.$highlight.removeDuplicates().sink { [weak self] frame in
+            guard let self else { return }
+            self.hints.highlight(self.panel.isVisible ? frame : nil)
+        }.store(in: &bag)
     }
 
     // MARK: Menu bar

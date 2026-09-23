@@ -40,30 +40,3 @@ enum AppCatalog {
         return i
     }
 }
-
-enum Fuzzy {
-    /// Higher is better; nil = no match. Every whitespace-separated token must match.
-    static func score(_ query: String, _ text: String) -> Int? {
-        var total = 0
-        for token in query.lowercased().split(separator: " ") {
-            guard let s = tokenScore(String(token), text) else { return nil }
-            total += s
-        }
-        return total
-    }
-
-    private static func tokenScore(_ q: String, _ text: String) -> Int? {
-        if text.hasPrefix(q) { return 1000 }
-        if let r = text.range(of: " " + q) { return 800 - text.distance(from: text.startIndex, to: r.lowerBound) }
-        if q.count > 1, String(text.split(separator: " ").compactMap(\.first)).hasPrefix(q) { return 700 }   // initials
-        if let r = text.range(of: q) { return 500 - text.distance(from: text.startIndex, to: r.lowerBound) }
-        // subsequence
-        var idx = text.startIndex, gaps = 0
-        for c in q {
-            guard let f = text[idx...].firstIndex(of: c) else { return nil }
-            gaps += text.distance(from: idx, to: f)
-            idx = text.index(after: f)
-        }
-        return max(1, 200 - gaps)
-    }
-}

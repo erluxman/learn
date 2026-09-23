@@ -63,3 +63,13 @@ Recorder → binding saved in Learn's own `~/Library/Application Support/Learn/b
 A global CGEvent tap (`KeyTap` in `Bindings.swift`) catches the combo in the frontmost app, swallows it and presses the
 menu item via AX (opening lazy submenus first if needed). Works instantly, no app restart, in any app with a menu bar.
 Nothing is written into the apps' own preferences.
+
+## On-screen elements
+- `ElementScanner`: walks visible windows' AX tree (0.6s / 4000-node budget, clipped to scroll areas) for
+  buttons, rows, tabs, fields, links, pressable icons. Enables `AXManualAccessibility` for Electron.
+- Learn panel lists them ("screen" tag) with menu items; selection draws a highlight box; ↩ presses/focuses/
+  selects (real click as last resort); ⌘↩ binds (located later by role + text).
+- Label mode (`HintMode`, default ⌘⇧Space, rebindable via the "Learn ▸ Label clickable items on screen" row):
+  yellow letter labels over every element; type a label to click. Keys captured by the KeyTap interceptor.
+- Limits: Chromium browsers (Brave) expose only toolbar items, not page content; canvas UIs expose nothing;
+  only windows on the current Space are visible to AX.

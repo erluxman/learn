@@ -169,7 +169,8 @@ private struct ShortcutRow: View {
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background((selected ? Color.white : Color.primary).opacity(0.12), in: RoundedRectangle(cornerRadius: 5))
             } else {
-                Text("menu").font(.system(size: 11)).foregroundStyle(selected ? .white.opacity(0.7) : .secondary)
+                Text(s.path.first == ElementScanner.marker ? "screen" : s.path.first == LearnActions.group ? "learn" : "menu")
+                    .font(.system(size: 11)).foregroundStyle(selected ? .white.opacity(0.7) : .secondary)
             }
         }
         .rowStyle(selected)
