@@ -74,7 +74,8 @@ enum ElementScanner {
         if let name, let f, f.width > 3, f.height > 3 {
             var text = [v[2], v[3], v[8]].compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .first { !$0.isEmpty } ?? ""
-            if text.isEmpty, !editable.contains(role), let s = v[4] as? String { text = s }
+            if editable.contains(role) { text = fieldText(el, label: text, hint: v[8] as? String, value: v[4] as? String) }
+            else if text.isEmpty, let s = v[4] as? String { text = s }
             if text.isEmpty, role == "AXRow" || role == "AXCell" || role == "AXLink" { text = innerText(el, depth: 0) }
             let sub = v[1] as? String
             out.append(ScreenElement(ref: el, role: role, roleName: sub == "AXSearchField" ? "Search Field" : name,
@@ -82,6 +83,35 @@ enum ElementScanner {
             if role != "AXRow" && role != "AXCell" && role != "AXGroup" { return }   // leaf-like controls
         }
         for k in kids { walk(k, clip: clip, depth: depth + 1, inRow: inRow || role == "AXRow", inWeb: inWeb, out: &out, visited: &visited, limit: limit, deadline: deadline) }
+    }
+
+    /// Field name for search = what's visible: label + hint while empty (hint showing), label + typed value
+    /// once filled (hint hidden → not searchable). Unlabeled fields borrow the text just before them.
+    private static func fieldText(_ el: AXUIElement, label: String, hint: String?, value: String?) -> String {
+        let hint = hint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let typed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        var label = label
+        if !typed.isEmpty, label == hint { label = "" }   // Chromium names unlabeled fields by their hint
+        if label.isEmpty {
+            label = (precedingText(el) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " ·→←•:-–—|"))
+        }
+        var parts = [label]
+        if typed.isEmpty { if hint != label { parts.append(hint) } }
+        else { parts.append(String(typed.prefix(40))) }
+        return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    private static func precedingText(_ el: AXUIElement) -> String? {
+        guard let parent: AXUIElement = value(el, kAXParentAttribute) else { return nil }
+        let sibs: [AXUIElement] = value(parent, kAXChildrenAttribute) ?? []
+        guard let i = sibs.firstIndex(where: { CFEqual($0, el) }) else { return nil }
+        for s in sibs[..<i].reversed().prefix(3) {
+            if (value(s, kAXRoleAttribute) as String?) == "AXStaticText", let t = value(s, kAXValueAttribute) as String?,
+               !t.trimmingCharacters(in: .whitespaces).isEmpty { return t }
+            let inner = innerText(s, depth: 2)
+            if !inner.isEmpty { return inner }
+        }
+        return nil
     }
 
     /// First bits of static text inside a row/cell/link, e.g. a file name in Finder's list.
@@ -104,6 +134,17 @@ enum ElementScanner {
     static func perform(_ e: ScreenElement) {
         Debug.log("perform \(e.roleName) '\(e.text.prefix(40))' web=\(e.web) frame=\(e.frame) front=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?")")
         if e.role == "AXLink", let url = linkURL(e) { return openLink(url, from: e) }
+        if editable.contains(e.role) {   // fields: AX focus works in web views too; verify, else click
+            DispatchQueue.global(qos: .userInteractive).async {
+                bringToFront(e)
+                AXUIElementSetAttributeValue(e.ref, kAXFocusedAttribute as CFString, kCFBooleanTrue)
+                usleep(80_000)
+                let ok = (value(e.ref, kAXFocusedAttribute) as Bool?) == true
+                Debug.log("focus field '\(e.text.prefix(30))' ok=\(ok)")
+                if !ok { click(at: CGPoint(x: e.frame.midX, y: e.frame.midY)) }
+            }
+            return
+        }
         if e.web {
             DispatchQueue.global(qos: .userInteractive).async {
                 bringToFront(e)
@@ -114,8 +155,6 @@ enum ElementScanner {
         var names: CFArray?
         AXUIElementCopyActionNames(e.ref, &names)
         let actions = names as? [String] ?? []
-        if editable.contains(e.role),
-           AXUIElementSetAttributeValue(e.ref, kAXFocusedAttribute as CFString, kCFBooleanTrue) == .success { return }
         if actions.contains(kAXPressAction), AXUIElementPerformAction(e.ref, kAXPressAction as CFString) == .success { return }
         if e.role == "AXRow" || e.role == "AXCell",
            AXUIElementSetAttributeValue(e.ref, kAXSelectedAttribute as CFString, kCFBooleanTrue) == .success { return }

@@ -24,8 +24,10 @@ final class MenuSearch {
                 Thread.sleep(forTimeInterval: 0.1)
                 found = Self.findOpenMenu(pid: pid, near: point)
             }
+            Debug.log("menuSearch: pid=\(pid) near=\(point) found=\(found != nil)")
             guard let found else { return }
             let items = Self.collect(found, path: [], parents: [], depth: 0)
+            Debug.log("menuSearch: \(items.count) items: \(items.prefix(8).map { $0.path.joined(separator: "▸") })")
             DispatchQueue.main.async {
                 guard !items.isEmpty else { return }
                 self.menu = found
@@ -92,7 +94,8 @@ final class MenuSearch {
     /// Highlight in the real menu; for submenu items open the parent chain first.
     private func highlight() {
         guard index < matches.count else { return }
-        for r in matches[index].refs { AXUIElementSetAttributeValue(r, kAXSelectedAttribute as CFString, kCFBooleanTrue) }
+        let codes = matches[index].refs.map { AXUIElementSetAttributeValue($0, kAXSelectedAttribute as CFString, kCFBooleanTrue).rawValue }
+        Debug.log("menuSearch: highlight '\(matches[index].path.joined(separator: "▸"))' results=\(codes)")
     }
 
     private func render() {
@@ -110,8 +113,10 @@ final class MenuSearch {
             AXUIElementSetAttributeValue(r, kAXSelectedAttribute as CFString, kCFBooleanTrue)
             usleep(150_000)
         }
-        if let last = item.refs.last, AXUIElementPerformAction(last, kAXPressAction as CFString) != .success {
-            DispatchQueue.main.async { NSSound.beep() }
+        if let last = item.refs.last {
+            let r = AXUIElementPerformAction(last, kAXPressAction as CFString)
+            Debug.log("menuSearch: press '\(item.path.joined(separator: "▸"))' result=\(r.rawValue)")
+            if r != .success { DispatchQueue.main.async { NSSound.beep() } }
         }
     }
 

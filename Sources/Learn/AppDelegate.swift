@@ -35,6 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         observeAppActivation()
 
         syncSystemShortcuts()
+        Debug.log("launch: AXTrusted=\(AXIsProcessTrusted()) postEvents=\(CGPreflightPostEventAccess()) listenEvents=\(CGPreflightListenEventAccess())")
         whenTrusted { [weak self] in
             self?.model.trusted = true
             NSLog("Learn key tap: %@", self?.keyTap.start() == true ? "started" : "FAILED")
