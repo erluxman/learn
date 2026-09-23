@@ -59,6 +59,7 @@ Build/install: `./build.sh` → `~/Applications/Learn.app`. DB: `~/Library/Appli
 - Hotkey is fixed at ⌥Space (`AppDelegate.swift`, `HotKey(...)`).
 
 ## Custom shortcuts (⌘↩ on a row)
-Recorder → writes `NSUserKeyEquivalents` via `/usr/bin/defaults` (container-aware for sandboxed apps), full menu
-path form `\033File\033New\033New Project…`. Running apps need a restart to apply (offered in-panel).
-Not honored by apps that ignore AppKit key equivalents (JetBrains/Java keymaps, some Electron apps).
+Recorder → binding saved in Learn's own `~/Library/Application Support/Learn/bindings.json` (app + menu path + combo).
+A global CGEvent tap (`KeyTap` in `Bindings.swift`) catches the combo in the frontmost app, swallows it and presses the
+menu item via AX (opening lazy submenus first if needed). Works instantly, no app restart, in any app with a menu bar.
+Nothing is written into the apps' own preferences.

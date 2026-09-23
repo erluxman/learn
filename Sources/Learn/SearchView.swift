@@ -9,7 +9,6 @@ struct SearchView: View {
             header
             Divider()
             if !model.trusted { permissionBanner }
-            if let prompt = model.restartPrompt { restartBar(prompt.app, prompt.message) }
             list
                 .overlay { if let r = model.recording { recorder(r) } }
             Divider()
@@ -90,18 +89,6 @@ struct SearchView: View {
         }
     }
 
-    private func restartBar(_ app: AppEntry, _ message: String) -> some View {
-        HStack {
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
-            Text(message).font(.system(size: 12))
-            Spacer()
-            Button("Later") { model.dismissRestartPrompt() }
-            Button("Restart \(app.name)") { model.restartPromptedApp() }
-        }
-        .padding(.horizontal, 16).padding(.vertical, 8)
-        .background(.green.opacity(0.10))
-    }
-
     private func recorder(_ item: Shortcut) -> some View {
         ZStack {
             Rectangle().fill(.black.opacity(0.35))
@@ -116,12 +103,14 @@ struct SearchView: View {
                     .foregroundStyle(model.recordedShortcut == nil ? .secondary : .primary)
                     .frame(minWidth: 220, minHeight: 56)
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 10))
-                if item.hasKey { Text("Current: \(item.display)").font(.system(size: 11)).foregroundStyle(.secondary) }
+                if item.hasKey { Text("Current: \(item.display)\(item.isCustom ? " (custom)" : "")").font(.system(size: 11)).foregroundStyle(.secondary) }
                 if let c = model.conflicts.first {
                     Label("Already used by \((c.path).joined(separator: " ▸ "))", systemImage: "exclamationmark.triangle.fill")
                         .font(.system(size: 11)).foregroundStyle(.orange)
                 }
-                Text("↩ save   ⌫ reset to default   ⎋ cancel").font(.system(size: 11)).foregroundStyle(.secondary)
+                Text("Works right away in \(model.currentApp?.name ?? "the app") — Learn runs the menu item.")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                Text(item.isCustom ? "↩ save   ⌫ remove custom   ⎋ cancel" : "↩ save   ⎋ cancel").font(.system(size: 11)).foregroundStyle(.secondary)
             }
             .padding(24)
             .frame(width: 420)
@@ -132,7 +121,7 @@ struct SearchView: View {
 
     private var footer: some View {
         HStack {
-            Text(model.info)
+            Text(model.notice ?? model.info)
             Spacer()
             Text(model.currentApp == nil ? "↑↓ select  ↩ open  ⎋ close" : "↩ run  ⌘↩ set shortcut  ⌘R refresh  ⌫/⎋ all apps")
         }
@@ -170,6 +159,10 @@ private struct ShortcutRow: View {
                 }
             }
             Spacer()
+            if let orig = s.original {
+                Text(orig.isEmpty ? "custom" : "custom · was \(orig)")
+                    .font(.system(size: 10)).foregroundStyle(selected ? .white.opacity(0.7) : .secondary)
+            }
             if s.hasKey {
                 Text(s.display)
                     .font(.system(size: 14, weight: .medium, design: .rounded))

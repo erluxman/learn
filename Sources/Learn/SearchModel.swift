@@ -5,19 +5,19 @@ final class SearchModel: ObservableObject {
     enum Mode: Equatable { case apps, shortcuts(AppEntry) }
 
     @Published var mode: Mode = .apps
-    @Published var query = "" { didSet { if query != oldValue { recompute() } } }
+    @Published var query = "" { didSet { if query != oldValue { notice = nil; recompute() } } }
     @Published var selection = 0
     @Published private(set) var apps: [AppEntry] = []
     @Published private(set) var shortcuts: [Shortcut] = []
     @Published private(set) var scanning = false
     @Published private(set) var info = ""
+    @Published private(set) var notice: String?   // one-off message; wins over `info` until the next navigation
     @Published var trusted = AXIsProcessTrusted()
     @Published var focusTick = 0
 
     // Shortcut recorder (⌘↩ on a row)
     @Published private(set) var recording: Shortcut?
     @Published private(set) var recorded: (code: Int, mods: Mods)?
-    @Published private(set) var restartPrompt: (app: AppEntry, message: String)?
 
     var onClose: (_ restoreFocus: Bool) -> Void = { _ in }
     private var allApps: [AppEntry] = AppCatalog.load()
@@ -42,6 +42,7 @@ final class SearchModel: ObservableObject {
     /// Opens straight into the focused app's shortcuts; falls back to the app list.
     func willShow(frontmost: NSRunningApplication?) {
         preferred = frontmost?.bundleIdentifier
+        notice = nil
         trusted = AXIsProcessTrusted()
         query = ""
         if let f = frontmost, let id = f.bundleIdentifier, let url = f.bundleURL {
@@ -60,7 +61,7 @@ final class SearchModel: ObservableObject {
     func recompute(keepSelection: Bool = false) {
         if let app = currentApp {
             let entry = ShortcutStore.shared.get(app.id)
-            let list = entry?.shortcuts ?? []
+            let list = Self.withBindings(entry?.shortcuts ?? [], app: app.id)
             shortcuts = query.isEmpty ? list
                 : list.compactMap { s in Fuzzy.score(query, s.searchText).map { (s, $0) } }
                     .sorted { $0.1 > $1.1 }.map(\.0)
@@ -125,7 +126,7 @@ final class SearchModel: ObservableObject {
 
     func startRecording() {
         guard let app = currentApp, selection < shortcuts.count else { return }
-        guard !app.isSystem else { info = "System shortcuts are changed in System Settings ▸ Keyboard"; return }
+        guard !app.isSystem else { notice = "System shortcuts are changed in System Settings ▸ Keyboard"; return }
         recording = shortcuts[selection]
         recorded = nil
     }
@@ -147,56 +148,42 @@ final class SearchModel: ObservableObject {
     /// Other items in this app already using the recorded combo.
     var conflicts: [Shortcut] {
         guard let new = recordedShortcut, let app = currentApp else { return [] }
-        return (ShortcutStore.shared.get(app.id)?.shortcuts ?? []).filter { $0.hasKey && $0.display == new.display && $0.path != new.path }
+        return Self.withBindings(ShortcutStore.shared.get(app.id)?.shortcuts ?? [], app: app.id)
+            .filter { $0.hasKey && $0.display == new.display && $0.path != new.path }
     }
 
-    /// reset: remove the custom shortcut (app default comes back after restart).
+    /// Saves the recorded combo as a Learn binding (works immediately); reset removes it.
     func saveRecording(reset: Bool = false) {
-        guard let app = currentApp, let old = recording else { return }
-        let new = reset ? nil : recordedShortcut
-        let value = new.flatMap { CustomKeys.encode(keyCode: $0.keyCode!, mods: $0.mods) }
-        guard reset || value != nil else { NSSound.beep(); return }
+        guard let app = currentApp, let item = recording else { return }
+        if reset {
+            Bindings.shared.remove(app.id, path: item.path)
+            notice = "Removed custom shortcut for \(item.title)"
+        } else {
+            guard let k = recorded else { NSSound.beep(); return }
+            let b = Binding(path: item.path, keyCode: k.code, mods: k.mods)
+            Bindings.shared.set(app.id, b)
+            notice = "\(b.shortcut.display) now runs \(item.title) in \(app.name)"
+        }
         cancelRecording()
-        info = "Saving…"
-        DispatchQueue.global(qos: .userInitiated).async {
-            let ok = CustomKeys.set(app.id, path: old.path, value: value)
-            let sig = CustomKeys.signature(for: app.id)
-            DispatchQueue.main.async {
-                guard ok else { self.info = "Couldn't save — macOS blocked writing \(app.name)'s settings"; return }
-                ShortcutStore.shared.replace(app.id, old: old,
-                                             with: new ?? Shortcut(path: old.path, key: "", keyCode: nil, mods: []),
-                                             customSig: sig, stale: reset)
-                let what = reset ? "Reset \(old.title) to default" : "Set \(new!.display) for \(old.title)"
-                if app.runningApp != nil {
-                    self.restartPrompt = (app, "\(what). Restart \(app.name) to apply.")
-                } else {
-                    self.info = "\(what). Applies next time \(app.name) opens."
-                }
-            }
-        }
+        recompute(keepSelection: true)
     }
 
-    /// Quits and reopens the app so it reads the new NSUserKeyEquivalents, then rescans it.
-    func restartPromptedApp() {
-        guard let app = restartPrompt?.app, let running = app.runningApp else { restartPrompt = nil; return }
-        restartPrompt = nil
-        onClose(false)
-        running.terminate()
-        DispatchQueue.global().async {
-            for _ in 0..<100 where !running.isTerminated { Thread.sleep(forTimeInterval: 0.1) }
-            guard running.isTerminated else { return }   // app refused (e.g. unsaved-changes dialog)
-            DispatchQueue.main.async {
-                NSWorkspace.shared.openApplication(at: app.url, configuration: NSWorkspace.OpenConfiguration()) { launched, _ in
-                    guard launched != nil else { return }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 3) { Scanner.shared.scan(app, launchIfNeeded: false) }
-                }
-            }
+    /// Menu items with Learn bindings applied on top (bindings for vanished items are kept visible).
+    static func withBindings(_ list: [Shortcut], app: String) -> [Shortcut] {
+        let binds = Bindings.shared.all(app)
+        guard !binds.isEmpty else { return list }
+        func custom(_ b: Binding, _ orig: Shortcut?) -> Shortcut {
+            var s = b.shortcut
+            s.original = orig.map { $0.hasKey ? $0.display : "" } ?? ""
+            return s
         }
+        var out = list.map { s in Bindings.shared.get(app, path: s.path).map { custom($0, s) } ?? s }
+        let paths = Set(list.map(\.path))
+        out += binds.filter { !paths.contains($0.path) }.map { custom($0, nil) }
+        return out
     }
 
-    func dismissRestartPrompt() { restartPrompt = nil }
-
-    func back() { mode = .apps; query = ""; recompute(); focusTick += 1 }
+    func back() { notice = nil; mode = .apps; query = ""; recompute(); focusTick += 1 }
 
     /// Esc is the only way back: shortcuts → apps; in apps it clears the query, then closes.
     func escape() {

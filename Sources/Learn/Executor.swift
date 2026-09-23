@@ -26,9 +26,9 @@ enum Executor {
     }
 
     private static func press(_ s: Shortcut, pid: pid_t) {
-        if let item = MenuScanner.find(path: s.path, pid: pid),
-           AXUIElementPerformAction(item, kAXPressAction as CFString) == .success { return }
-        postKey(s)
+        if MenuScanner.press(path: s.path, pid: pid) { return }
+        if !s.isCustom { postKey(s) }   // posting a custom combo would just loop back through our tap
+        else { NSSound.beep() }
     }
 
     static func postKey(_ s: Shortcut) {

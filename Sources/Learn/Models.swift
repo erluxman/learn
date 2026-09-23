@@ -69,7 +69,9 @@ struct Shortcut: Codable, Hashable, Identifiable {
     let key: String         // display key, e.g. "N", "←", "F11"
     let keyCode: Int?       // virtual key code if known
     let mods: Mods
+    var original: String? = nil   // set when a Learn binding overrides this item: the app's own shortcut ("" = none)
 
+    var isCustom: Bool { original != nil }
     var id: String { path.joined(separator: "\u{1F}") + "|" + display }
     var title: String { path.last ?? "" }
     var location: String { path.dropLast().joined(separator: " ▸ ") }
@@ -81,7 +83,7 @@ struct Shortcut: Codable, Hashable, Identifiable {
         return fn + mods.glyphs + key
     }
     var searchText: String {
-        (path + [display, key, mods.words]).joined(separator: " ").lowercased()
+        (path + [display, key, mods.words, isCustom ? "custom" : ""]).joined(separator: " ").lowercased()
     }
 }
 

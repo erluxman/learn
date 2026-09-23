@@ -122,6 +122,30 @@ enum MenuScanner {
         }
     }
 
+    /// Presses a menu item. If a lazy submenu hasn't been filled yet, opens the menu path first so the app fills it.
+    static func press(path: [String], pid: pid_t) -> Bool {
+        if let item = find(path: path, pid: pid) {
+            return AXUIElementPerformAction(item, kAXPressAction as CFString) == .success
+        }
+        guard let bar = menuBar(pid: pid), let first = path.first,
+              let top = children(bar).first(where: { title($0) == first }) else { return false }
+        AXUIElementPerformAction(top, kAXPressAction as CFString)
+        usleep(200_000)
+        var node = top
+        for (i, name) in path.dropFirst().enumerated() {
+            guard let next = children(node).flatMap({ children($0) }).first(where: { title($0) == name }) else {
+                if let menu = children(top).first { AXUIElementPerformAction(menu, kAXCancelAction as CFString) }
+                return false
+            }
+            if i < path.count - 2 {   // submenu on the way: highlight it so it opens and fills
+                AXUIElementSetAttributeValue(next, kAXSelectedAttribute as CFString, kCFBooleanTrue)
+                usleep(150_000)
+            }
+            node = next
+        }
+        return AXUIElementPerformAction(node, kAXPressAction as CFString) == .success
+    }
+
     /// Finds a menu item by its title path.
     static func find(path: [String], pid: pid_t) -> AXUIElement? {
         guard let bar = menuBar(pid: pid), let first = path.first,

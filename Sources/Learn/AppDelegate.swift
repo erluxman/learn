@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var syncWork: DispatchWorkItem?
     private var timer: Timer?
     private let store = ShortcutStore.shared
+    private let keyTap = KeyTap()
     private var lastApp: NSRunningApplication?   // last app the user focused (not Learn)
 
     func applicationDidFinishLaunching(_ note: Notification) {
@@ -27,6 +28,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         syncSystemShortcuts()
         whenTrusted { [weak self] in
             self?.model.trusted = true
+            NSLog("Learn key tap: %@", self?.keyTap.start() == true ? "started" : "FAILED")
             self?.scanRunningApps(onlyMissing: true)
         }
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.syncCustomKeys() }

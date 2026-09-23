@@ -31,15 +31,6 @@ final class ShortcutStore {
         NotificationCenter.default.post(name: Self.changed, object: s.bundleID)
     }
 
-    /// Swaps one item after the user changed its shortcut, without waiting for a rescan.
-    func replace(_ id: String, old: Shortcut, with new: Shortcut, customSig: String, stale: Bool) {
-        guard var s = cache[id] else { return }
-        if let i = s.shortcuts.firstIndex(where: { $0.path == old.path }) { s.shortcuts[i] = new } else { s.shortcuts.append(new) }
-        s.customSig = customSig
-        s.stale = s.stale || stale
-        put(s)
-    }
-
     func markStale(_ id: String) {
         guard var s = cache[id], !s.stale else { return }
         s.stale = true
