@@ -33,7 +33,8 @@ enum ElementScanner {
     ] as CFArray
 
     /// Focused window first, then other visible windows. Stops at `budget` seconds / `limit` nodes.
-    static func scan(pid: pid_t, budget: TimeInterval = 0.6, limit: Int = 4000) -> [ScreenElement] {
+    /// `windowTitle`: only that window (used to scan Learn's own Settings window).
+    static func scan(pid: pid_t, budget: TimeInterval = 0.6, limit: Int = 4000, windowTitle: String? = nil) -> [ScreenElement] {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.5)
         AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)   // Electron/Chromium
@@ -42,6 +43,7 @@ enum ElementScanner {
         for w in (value(app, kAXWindowsAttribute) as [AXUIElement]?) ?? [] where !windows.contains(where: { CFEqual($0, w) }) {
             if (value(w, kAXMinimizedAttribute) as Bool?) != true { windows.append(w) }
         }
+        if let windowTitle { windows = windows.filter { (value($0, kAXTitleAttribute) as String?) == windowTitle } }
         let deadline = Date().addingTimeInterval(budget)
         var out: [ScreenElement] = []
         var visited = 0
@@ -54,7 +56,7 @@ enum ElementScanner {
 
     private static func walk(_ el: AXUIElement, clip: CGRect, depth: Int, inRow: Bool, inWeb: Bool, out: inout [ScreenElement],
                              visited: inout Int, limit: Int, deadline: Date) {
-        guard depth < 40, visited < limit, Date() < deadline else { return }
+        guard depth < 80, visited < limit, Date() < deadline else { return }   // web apps nest 50+ deep
         visited += 1
         var raw: CFArray?
         guard AXUIElementCopyMultipleAttributeValues(el, attrs, [], &raw) == .success,
@@ -74,7 +76,7 @@ enum ElementScanner {
         if let name, let f, f.width > 3, f.height > 3 {
             var text = [v[2], v[3], v[8]].compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .first { !$0.isEmpty } ?? ""
-            if editable.contains(role) { text = fieldText(el, label: text, hint: v[8] as? String, value: v[4] as? String) }
+            if editable.contains(role) { text = fieldText(el, frame: f, label: text, hint: v[8] as? String, value: v[4] as? String) }
             else if text.isEmpty, let s = v[4] as? String { text = s }
             if text.isEmpty, role == "AXRow" || role == "AXCell" || role == "AXLink" { text = innerText(el, depth: 0) }
             let sub = v[1] as? String
@@ -87,10 +89,11 @@ enum ElementScanner {
 
     /// Field name for search = what's visible: label + hint while empty (hint showing), label + typed value
     /// once filled (hint hidden → not searchable). Unlabeled fields borrow the text just before them.
-    private static func fieldText(_ el: AXUIElement, label: String, hint: String?, value: String?) -> String {
-        let hint = hint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    private static func fieldText(_ el: AXUIElement, frame: CGRect, label: String, hint: String?, value: String?) -> String {
+        var hint = hint?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let typed = value?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         var label = label
+        if typed.isEmpty, hint.isEmpty { hint = overlaidText(el, frame: frame) ?? "" }   // rich editors (x.com…)
         if !typed.isEmpty, label == hint { label = "" }   // Chromium names unlabeled fields by their hint
         if label.isEmpty {
             label = (precedingText(el) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: " ·→←•:-–—|"))
@@ -99,6 +102,26 @@ enum ElementScanner {
         if typed.isEmpty { if hint != label { parts.append(hint) } }
         else { parts.append(String(typed.prefix(40))) }
         return parts.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    /// Rich-text editors (Draft.js, Lexical, ProseMirror) draw their hint as separate text over the editor.
+    /// Find static text near the field (≤4 ancestors up) whose top-left sits at the field's top-left.
+    private static func overlaidText(_ el: AXUIElement, frame f: CGRect) -> String? {
+        var node = el
+        for _ in 0..<4 {
+            guard let parent: AXUIElement = value(node, kAXParentAttribute) else { return nil }
+            node = parent
+            var queue = [parent], seen = 0
+            while !queue.isEmpty, seen < 60 {
+                let n = queue.removeFirst(); seen += 1
+                if CFEqual(n, el) { continue }
+                if (value(n, kAXRoleAttribute) as String?) == "AXStaticText", let t = value(n, kAXValueAttribute) as String?,
+                   !t.trimmingCharacters(in: .whitespaces).isEmpty, let tf = frame(n),
+                   abs(tf.minX - f.minX) < 24, abs(tf.minY - f.minY) < 24 { return t }
+                queue += (value(n, kAXChildrenAttribute) as [AXUIElement]?) ?? []
+            }
+        }
+        return nil
     }
 
     private static func precedingText(_ el: AXUIElement) -> String? {
@@ -129,13 +152,18 @@ enum ElementScanner {
 
     // MARK: Actions
 
+    /// AX calls into Learn's *own* windows run in-process on the calling thread (straight into SwiftUI), so they
+    /// must be on main. Calls into other apps are IPC and go off main so a slow app can't stall Learn.
+    static func axQueue(_ pid: pid_t) -> DispatchQueue { pid == getpid() ? .main : .global(qos: .userInteractive) }
+    static func pid(_ e: ScreenElement) -> pid_t { var p: pid_t = 0; AXUIElementGetPid(e.ref, &p); return p }
+
     /// Text fields get focus, rows get selected, everything else is pressed; last resort is a real click.
     /// Web content (Electron/browsers) reports AX success without reacting, so it always gets a real click.
     static func perform(_ e: ScreenElement) {
         Debug.log("perform \(e.roleName) '\(e.text.prefix(40))' web=\(e.web) frame=\(e.frame) front=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?")")
         if e.role == "AXLink", let url = linkURL(e) { return openLink(url, from: e) }
         if editable.contains(e.role) {   // fields: AX focus works in web views too; verify, else click
-            DispatchQueue.global(qos: .userInteractive).async {
+            axQueue(pid(e)).async {
                 bringToFront(e)
                 AXUIElementSetAttributeValue(e.ref, kAXFocusedAttribute as CFString, kCFBooleanTrue)
                 usleep(80_000)
@@ -167,8 +195,8 @@ enum ElementScanner {
         var pid: pid_t = 0
         AXUIElementGetPid(e.ref, &pid)
         let centre = CGPoint(x: e.frame.midX, y: e.frame.midY)
-        DispatchQueue.main.async { onMenuOpened(pid, centre) }   // starts looking for the menu (polls ~1.5s)
-        DispatchQueue.global(qos: .userInteractive).async {
+        if pid != getpid() { DispatchQueue.main.async { onMenuOpened(pid, centre) } }   // search inside it (other apps)
+        axQueue(pid).async {
             var names: CFArray?
             AXUIElementCopyActionNames(e.ref, &names)
             if e.web || !((names as? [String] ?? []).contains("AXShowMenu")
@@ -177,6 +205,45 @@ enum ElementScanner {
                 click(at: centre, right: true)
             }
         }
+    }
+
+    /// Learn ▸ "Right-click the focused item": whatever has keyboard focus in the front app (selected row of a
+    /// list, caret in a text area, focused button); nothing focused → right-click under the pointer. Call off main.
+    static func rightClickFocused() {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return }
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(axApp, 0.5)
+        guard var el: AXUIElement = value(axApp, kAXFocusedUIElementAttribute) else {
+            return click(at: CGEvent(source: nil)?.location ?? .zero, right: true)
+        }
+        let role: String = value(el, kAXRoleAttribute) ?? ""
+        if ["AXTable", "AXOutline", "AXList"].contains(role),   // list focused → its selected row
+           let row = (value(el, kAXSelectedRowsAttribute) as [AXUIElement]?)?.first ?? (value(el, kAXSelectedChildrenAttribute) as [AXUIElement]?)?.first {
+            el = row
+        }
+        guard var f = frame(el), f.width > 0, f.height > 0 else {
+            return click(at: CGEvent(source: nil)?.location ?? .zero, right: true)
+        }
+        if editable.contains(role) || role == "AXWebArea", let caret = caretRect(el) { f = caret }   // text: at the caret
+        var web = false, node = el
+        for _ in 0..<60 {
+            if (value(node, kAXRoleAttribute) as String?) == "AXWebArea" { web = true; break }
+            guard let p: AXUIElement = value(node, kAXParentAttribute) else { break }
+            node = p
+        }
+        let e = ScreenElement(ref: el, role: value(el, kAXRoleAttribute) ?? "", roleName: "", text: "", frame: f, web: web)
+        Debug.log("rightClickFocused \(e.role) frame=\(f) web=\(web)")
+        showMenu(e)
+    }
+
+    private static func caretRect(_ el: AXUIElement) -> CGRect? {
+        guard let range: AXValue = value(el, kAXSelectedTextRangeAttribute) else { return nil }
+        var out: CFTypeRef?
+        guard AXUIElementCopyParameterizedAttributeValue(el, kAXBoundsForRangeParameterizedAttribute as CFString, range, &out) == .success,
+              let v = out, CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
+        var r = CGRect.zero
+        guard AXValueGetValue(v as! AXValue, .cgRect, &r), r.height > 0 else { return nil }
+        return CGRect(x: r.minX, y: r.minY, width: max(r.width, 2), height: r.height)
     }
 
     /// For bindings: find by role + text in the frontmost app now, then perform.
@@ -197,6 +264,7 @@ enum ElementScanner {
         func post(_ type: CGEventType) {
             let e = CGEvent(mouseEventSource: src, mouseType: type, mouseCursorPosition: p, mouseButton: button)
             e?.setIntegerValueField(.mouseEventClickState, value: 1)
+            e?.flags = []   // keys still held (the ⌃ + ⌃ right-click chord) must not turn this into ⌃-click / ⌘-click
             e?.post(tap: .cghidEventTap)
         }
         Debug.log("click \(right ? "right" : "left") at \(p) front=\(NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?")")

@@ -34,15 +34,28 @@ final class Panel: NSPanel, NSWindowDelegate {
     /// Hide the app too, so focus returns to the app the user was in (like Spotlight).
     var onDismiss: () -> Void = {}
 
+    /// App to hand focus back to on close (nil: Learn's own Settings was in front).
+    var returnTo: NSRunningApplication?
+
+    /// Closes only the panel — never hides Learn (that would hide an open Settings window too).
     func dismiss(restoreFocus: Bool = true) {
+        let wasVisible = isVisible
         orderOut(nil)
         onDismiss()
-        if restoreFocus && NSApp.isActive { NSApp.hide(nil) }
+        guard restoreFocus, wasVisible, NSApp.isActive else { return }
+        if let app = returnTo, !app.isTerminated {
+            NSApp.yieldActivation(to: app)
+            app.activate()
+        } else if let settings = NSApp.windows.first(where: { $0.isVisible && $0.title == SettingsWindow.title }) {
+            settings.makeKeyAndOrderFront(nil)
+        } else {
+            NSApp.hide(nil)
+        }
     }
 
     func windowDidResignKey(_ notification: Notification) {
         // A scan (hidden launch / menu expansion) may grab focus → take it back instead of closing.
-        guard Scanner.holdingFocus > 0 else { return dismiss() }
+        guard Scanner.holdingFocus > 0 else { return dismiss(restoreFocus: false) }   // user clicked elsewhere: don't steal it back
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self, self.isVisible else { return }
             NSApp.activate(ignoringOtherApps: true)

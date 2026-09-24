@@ -3,6 +3,7 @@ import AppKit
 /// Runs a shortcut in its app: activate app → press the menu item via AX; fall back to a synthesized keystroke.
 enum Executor {
     static func run(_ s: Shortcut, in app: AppEntry) {
+        DispatchQueue.main.async { KeyHUD.shared.flash(s.display, caption: s.title) }
         if app.isSystem {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { postKey(s) }
             return

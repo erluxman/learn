@@ -21,6 +21,12 @@ system + app changes; per-app "Refresh".
 | `ShortcutStore.swift` | DB = JSON per bundle id in `~/Library/Application Support/Learn/db/` (+ in-memory cache) |
 | `Watchers.swift` | FSEvents-like `DispatchSource` watch on `~/Library/Preferences` → system/custom shortcut change → re-sync; `NSWorkspace` app-activate → background rescan of that app |
 | `Executor.swift` | activate target app, `AXPress` matching menu item (exact), fallback: synthesize key via `CGEvent` |
+| `PointerMode.swift` | keyboard mouse (Learn command, default ⌥⇧Space): HJKL/arrows move (hold = accelerate, ⇧ slow, ⌥ scroll), Space click, D double, R right-click, V drag, hotkey again = next screen, ⎋ exit |
+| `Bindings.swift` KeyTap chord | left ⌃ + right ⌃ pressed together, released with no other key → right-click at pointer (Settings toggle) |
+| `KeyHUD.swift` | bottom-centre bubble: shortcut pressed / recorded / run by Learn + its command name; sticky pointer-mode hint |
+| `SpotlightKey.swift` | optional ⌘Space takeover: rewrites Spotlight's symbolichotkeys #64 (off, or moved to ⌥Space) + `activateSettings -u`; uninstall.sh restores |
+| `Answers.swift` | instant answers in top-level search: calculator (own parser, no NSExpression), unit conversions (Measurement), definitions (DCSCopyTextDefinition) |
+| `FileSearch.swift` | home-folder file search via NSMetadataQuery (Spotlight index); icons from UTI so no folder-access prompts |
 | `Fuzzy.swift` | tiny fuzzy scorer (subsequence + prefix bonus) |
 | `build.sh` | `swift build -c release` → assemble `Learn.app` (Info.plist, LSUIElement) → codesign w/ Apple Development id → copy to `~/Applications` (so Spotlight finds it) |
 
@@ -73,3 +79,20 @@ Nothing is written into the apps' own preferences.
   yellow letter labels over every element; type a label to click. Keys captured by the KeyTap interceptor.
 - Limits: Chromium browsers (Brave) expose only toolbar items, not page content; canvas UIs expose nothing;
   only windows on the current Space are visible to AX.
+
+## Settings (⌘, in panel · menu bar ▸ Settings… · "Learn ▸ Open Learn Settings" row)
+- Permissions: Accessibility, post events, Input Monitoring (live, 1s refresh, Grant buttons), launch at login.
+  Opens automatically at launch when Accessibility is missing.
+- General: recordable panel hotkey (Prefs.panelKey, Carbon; warns when taken) + labels hotkey (global binding),
+  show on-screen items / key-less menu commands, rescan interval, scan buttons, debug log toggle.
+- Shortcuts: all recorded bindings grouped by app, removable.
+- `Prefs.swift` (UserDefaults), `SettingsView.swift`; `Recorder.active` pauses hotkey + key tap while recording.
+
+## Packaging
+- `./package.sh` → `dist/Learn.dmg` + `dist/Learn.zip` (universal arm64+x86_64, signed with the first Apple
+  Development identity). Icon: `Resources/AppIcon.icns` (regenerate: `swift scripts/make_icon.swift <out.iconset>`
+  + `iconutil -c icns`).
+- `./uninstall.sh [--purge]` → quits, removes /Applications + ~/Applications copies, `tccutil reset`
+  Accessibility / ListenEvent / PostEvent; `--purge` also deletes data + settings.
+- `./build.sh` is the dev loop (installs to ~/Applications). Don't mix with the DMG copy in /Applications.
+- Opening the app → Settings (Permissions tab if anything's missing); the hotkey → search. Silent at login.

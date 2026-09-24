@@ -5,6 +5,7 @@ final class HotKey {
     private var ref: EventHotKeyRef?
     private var handler: EventHandlerRef?
     private let action: () -> Void
+    private(set) var registered = false
 
     init(keyCode: Int, carbonMods: Int, action: @escaping () -> Void) {
         self.action = action
@@ -15,7 +16,7 @@ final class HotKey {
             return noErr
         }, 1, &spec, me, &handler)
         let id = EventHotKeyID(signature: OSType(0x4C524E31), id: 1)   // 'LRN1'
-        RegisterEventHotKey(UInt32(keyCode), UInt32(carbonMods), id, GetApplicationEventTarget(), 0, &ref)
+        registered = RegisterEventHotKey(UInt32(keyCode), UInt32(carbonMods), id, GetApplicationEventTarget(), 0, &ref) == noErr
     }
 
     deinit {

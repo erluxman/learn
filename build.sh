@@ -9,6 +9,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp .build/release/Learn "$APP/Contents/MacOS/Learn"
 cp Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 # Stable identity keeps the Accessibility grant across rebuilds (ad-hoc "-" resets it every build).
 SIGN_ID="${SIGN_ID:-$(security find-identity -v -p codesigning | awk -F'"' 'NR==1{print $2}')}"

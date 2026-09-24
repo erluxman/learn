@@ -7,6 +7,7 @@ enum Debug {
     private static let fmt: DateFormatter = { let f = DateFormatter(); f.dateFormat = "HH:mm:ss.SSS"; return f }()
 
     static func log(_ s: String) {
+        guard UserDefaults.standard.bool(forKey: "debugLog") else { return }   // Settings ▸ General ▸ Troubleshooting
         let line = "\(fmt.string(from: Date())) \(s)\n"
         q.async {
             if let h = try? FileHandle(forWritingTo: url) { h.seekToEndOfFile(); h.write(Data(line.utf8)); try? h.close() }

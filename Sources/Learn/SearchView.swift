@@ -34,7 +34,7 @@ struct SearchView: View {
             } else {
                 Image(systemName: "magnifyingglass").font(.system(size: 20)).foregroundStyle(.secondary)
             }
-            TextField(model.currentApp == nil ? "Search apps" : "Search shortcuts", text: $model.query)
+            TextField(model.currentApp == nil ? "Search apps and files, calculate, convert" : "Search shortcuts", text: $model.query)
                 .textFieldStyle(.plain)
                 .font(.system(size: 24, weight: .light))
                 .focused($focused)
@@ -46,6 +46,11 @@ struct SearchView: View {
                 .help("Re-read this app's shortcuts (⌘R)")
                 .disabled(model.scanning)
             }
+            Button { model.openSettings() } label: {
+                Image(systemName: "gearshape").font(.system(size: 15))
+            }
+            .buttonStyle(.borderless)
+            .help("Learn Settings (⌘,)")
         }
         .padding(.horizontal, 16).padding(.vertical, 12)
     }
@@ -68,16 +73,16 @@ struct SearchView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 2) {
-                    if model.currentApp != nil {
-                        ForEach(Array(model.shortcuts.enumerated()), id: \.element.id) { i, s in
-                            ShortcutRow(s: s, selected: i == model.selection)
-                                .onTapGesture { model.activate(i) }
+                    ForEach(Array(model.results.enumerated()), id: \.element.id) { i, hit in
+                        Group {
+                            switch hit {
+                            case .shortcut(let s): ShortcutRow(s: s, selected: i == model.selection)
+                            case .app(let a): AppRow(app: a, selected: i == model.selection)
+                            case .file(let f): FileRow(f: f, selected: i == model.selection)
+                            case .answer(let a): AnswerRow(a: a, selected: i == model.selection)
+                            }
                         }
-                    } else {
-                        ForEach(Array(model.apps.enumerated()), id: \.element.id) { i, a in
-                            AppRow(app: a, selected: i == model.selection)
-                                .onTapGesture { model.activate(i) }
-                        }
+                        .onTapGesture { model.activate(i) }
                     }
                 }
                 .padding(6)
@@ -123,7 +128,8 @@ struct SearchView: View {
         HStack {
             Text(model.notice ?? model.info)
             Spacer()
-            Text(model.currentApp == nil ? "↑↓ select  ↩ open  ⎋ close" : "↩ run  ⇥ right-click  ⌘↩ set shortcut  ⌘R refresh  ⌫/⎋ apps")
+            Text(model.currentApp == nil ? "↩ open  ⌘↩ launch app · show file  ⎋ close  ⌘, settings"
+                 : "↩ run  \(Prefs.shared.contextKey.shortcut.display) right-click  \(Prefs.shared.recordKey.shortcut.display) set shortcut  ⌘R refresh  ⎋ apps")
         }
         .font(.system(size: 11)).foregroundStyle(.secondary)
         .padding(.horizontal, 16).padding(.vertical, 7)
@@ -147,6 +153,44 @@ private struct AppRow: View {
     }
 }
 
+private struct FileRow: View {
+    let f: FileHit
+    let selected: Bool
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(nsImage: f.icon).resizable().frame(width: 28, height: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(f.name).font(.system(size: 14)).lineLimit(1)
+                Text(f.folder).font(.system(size: 11)).lineLimit(1).truncationMode(.middle)
+                    .foregroundStyle(selected ? .white.opacity(0.75) : .secondary)
+            }
+            Spacer()
+            Text(f.score < 0 ? "contents" : "file").font(.system(size: 11)).foregroundStyle(selected ? .white.opacity(0.7) : .secondary)
+        }
+        .rowStyle(selected)
+    }
+}
+
+private struct AnswerRow: View {
+    let a: Answer
+    let selected: Bool
+    var body: some View {
+        HStack(alignment: a.kind == .define ? .top : .center, spacing: 10) {
+            Image(systemName: a.symbol).font(.system(size: 24)).frame(width: 28)
+                .foregroundStyle(selected ? .white : .accentColor)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(a.title).font(.system(size: a.kind == .define ? 15 : 22, weight: .medium, design: a.kind == .define ? .default : .rounded))
+                    .textSelection(.enabled)
+                Text(a.detail).font(.system(size: 11)).lineLimit(a.kind == .define ? 3 : 1)
+                    .foregroundStyle(selected ? .white.opacity(0.75) : .secondary)
+            }
+            Spacer()
+            Text(a.kind == .define ? "dictionary" : "↩ copy").font(.system(size: 11)).foregroundStyle(selected ? .white.opacity(0.7) : .secondary)
+        }
+        .rowStyle(selected)
+    }
+}
+
 private struct ShortcutRow: View {
     let s: Shortcut
     let selected: Bool
@@ -160,7 +204,7 @@ private struct ShortcutRow: View {
             }
             Spacer()
             if let orig = s.original {
-                Text(orig.isEmpty ? "custom" : "custom · was \(orig)")
+                Text(orig.isEmpty ? "set in Learn" : "set in Learn · app's \(orig)")
                     .font(.system(size: 10)).foregroundStyle(selected ? .white.opacity(0.7) : .secondary)
             }
             if s.hasKey {
