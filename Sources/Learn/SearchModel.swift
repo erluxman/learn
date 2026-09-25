@@ -26,7 +26,8 @@ final class SearchModel: ObservableObject {
         ("Input Monitoring permission", .permissions), ("Launch at login", .permissions),
         ("General", .general), ("Open Learn hotkey", .general), ("Replace Spotlight (⌘Space opens Learn)", .general), ("Label clickable items hotkey", .general),
         ("Right-click the focused item hotkey", .general), ("Open Learn Settings hotkey", .general),
-        ("Pointer mode hotkey (control the pointer with the keyboard)", .general), ("Shortcut display: customize look, position, font, color, animation", .general),
+        ("Pointer mode hotkey (control the pointer with the keyboard)", .general),
+        ("Move window to next screen hotkey", .general), ("Shortcut display: customize look, position, font, color, animation", .general),
         ("Right-click with both control keys", .general),
         ("Record-shortcut key (inside Learn)", .general), ("Right-click key (inside Learn)", .general),
         ("Show on-screen items", .general), ("Search files (Spotlight index)", .general),
@@ -103,6 +104,7 @@ final class SearchModel: ObservableObject {
     /// Opens straight into the focused app's shortcuts (or Learn's settings); falls back to the app list.
     func willShow(frontmost: NSRunningApplication?, settings: Bool = false) {
         preferred = frontmost?.bundleIdentifier
+        Synonyms.refreshScreens()   // displays come and go (Sidecar, docks)
         notice = nil
         trusted = AXIsProcessTrusted()
         query = ""
@@ -128,7 +130,7 @@ final class SearchModel: ObservableObject {
         if let app = currentApp {
             let entry = ShortcutStore.shared.get(app.id)
             // Learn's own commands only appear when searched for — the list itself is just this app.
-            let learn = query.isEmpty ? [] : LearnActions.all.map { Shortcut(path: $0, key: "", keyCode: nil, mods: []) }
+            let learn = query.isEmpty ? [] : (LearnActions.all + WindowMover.paths).map { Shortcut(path: $0, key: "", keyCode: nil, mods: []) }
             let onScreen = screen.appID == app.id ? screenRows : []
             let menus = (entry?.shortcuts ?? []).filter { Prefs.shared.showMenuCommands || $0.hasKey }
             let list = app == Self.settingsEntry ? Self.settingsRows + onScreen

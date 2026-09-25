@@ -18,12 +18,14 @@ enum LearnActions {
     static let settings = [group, "Open Learn Settings"]
     static let rightClick = [group, "Right-click the focused item"]
     static let pointer = [group, "Control the pointer with the keyboard"]
-    static let all: [[String]] = [labels, rightClick, pointer, settings]
+    static let nextScreen = [group, "Move window to next screen"]
+    static let all: [[String]] = [labels, rightClick, pointer, nextScreen, settings]
     /// Built-in combos until the user rebinds them (⌘↩ on the item; ⌫ there restores these).
     static let defaults: [Binding] = [
         Binding(path: labels, keyCode: 49, mods: [.cmd, .shift]),   // ⌘⇧Space
         Binding(path: rightClick, keyCode: 109, mods: [.shift]),   // ⇧F10, the Windows context-menu key
         Binding(path: pointer, keyCode: 49, mods: [.opt, .shift]),   // ⌥⇧Space
+        Binding(path: nextScreen, keyCode: 49, mods: [.cmd, .opt, .shift]),   // ⌘⌥⇧Space
     ]
     static var run: ([String]) -> Void = { _ in }
 }

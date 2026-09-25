@@ -83,7 +83,7 @@ struct Shortcut: Codable, Hashable, Identifiable {
         return fn + mods.glyphs + key
     }
     var searchText: String {
-        (path + [display, key, mods.words, isCustom ? "custom" : ""]).joined(separator: " ").lowercased()
+        Synonyms.expand((path + [display, key, mods.words, isCustom ? "custom" : ""]).joined(separator: " ").lowercased())
     }
 }
 

@@ -174,6 +174,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 ElementScanner.axQueue(front).asyncAfter(deadline: .now() + wait) { ElementScanner.rightClickFocused() }
                 return
             }
+            if path == LearnActions.nextScreen { WindowMover.move(to: nil); return }
+            if let last = path.last, last.hasPrefix(WindowMover.prefix) {   // "Move window to <display>"
+                WindowMover.move(to: String(last.dropFirst(WindowMover.prefix.count)))
+                return
+            }
             if path == LearnActions.pointer {
                 if self.pointer.active { self.pointer.stop(); return }
                 if self.panel.isVisible { self.panel.dismiss() }
