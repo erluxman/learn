@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         observeAppActivation()
 
         syncSystemShortcuts()
+        if Prefs.shared.quickAnswers { Rates.shared.refreshIfStale() }   // so the first currency query has rates
         Debug.log("launch: AXTrusted=\(AXIsProcessTrusted()) postEvents=\(CGPreflightPostEventAccess()) listenEvents=\(CGPreflightListenEventAccess())")
         whenTrusted { [weak self] in
             self?.model.trusted = true

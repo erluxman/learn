@@ -26,7 +26,7 @@ final class SearchModel: ObservableObject {
         ("Input Monitoring permission", .permissions), ("Launch at login", .permissions),
         ("General", .general), ("Open Learn hotkey", .general), ("Replace Spotlight (⌘Space opens Learn)", .general), ("Label clickable items hotkey", .general),
         ("Right-click the focused item hotkey", .general), ("Open Learn Settings hotkey", .general),
-        ("Pointer mode hotkey (control the pointer with the keyboard)", .general), ("Show shortcuts as you press them", .general),
+        ("Pointer mode hotkey (control the pointer with the keyboard)", .general), ("Shortcut display: customize look, position, font, color, animation", .general),
         ("Right-click with both control keys", .general),
         ("Record-shortcut key (inside Learn)", .general), ("Right-click key (inside Learn)", .general),
         ("Show on-screen items", .general), ("Search files (Spotlight index)", .general),
@@ -77,6 +77,9 @@ final class SearchModel: ObservableObject {
     private let fileSearch = FileSearch()
 
     init() {
+        NotificationCenter.default.addObserver(forName: Rates.changed, object: nil, queue: .main) { [weak self] _ in
+            if self?.query.isEmpty == false { self?.recompute(keepSelection: true) }   // first rates arrived mid-query
+        }
         fileSearch.onResults = { [weak self] hits in
             guard let self else { return }
             self.files = hits

@@ -1,8 +1,8 @@
 import Foundation
 import CoreServices
 
-/// Spotlight-style instant answers for the search field: arithmetic, unit conversions, dictionary definitions.
-/// All local (Foundation + Dictionary Services), no network.
+/// Spotlight-style instant answers for the search field: arithmetic, unit and currency conversions, definitions.
+/// Local except currency rates (fetched by `Rates`, cached for 12 h).
 struct Answer: Hashable {
     enum Kind { case calc, convert, define }
     let kind: Kind
@@ -19,7 +19,7 @@ enum Answers {
     /// Calculator and conversions: shown above everything else.
     static func instant(_ q: String) -> Answer? {
         let q = q.trimmingCharacters(in: .whitespaces)
-        if let a = convert(q) { return a }
+        if let a = convert(q) ?? currency(q) { return a }
         guard q.rangeOfCharacter(from: .decimalDigits) != nil, q.rangeOfCharacter(from: CharacterSet(charactersIn: "+-*/^%×÷(")) != nil,
               let v = Calc.evaluate(q), v.isFinite else { return nil }
         let s = format(v, digits: 10)
@@ -59,6 +59,39 @@ enum Answers {
         return Answer(kind: .convert, title: "\(format(n, digits: 6)) \(from.symbol) = \(out) \(to.symbol)", detail: q, value: out)
     }
 
+    // MARK: Currency
+
+    /// "100 usd to npr", "$50 in eur", "20 euros to rupees", "100 usd" (→ this Mac's currency).
+    private static func currency(_ q: String) -> Answer? {
+        let sym = "$€£¥₹"
+        let re = try! NSRegularExpression(pattern: "^([\(sym)]?)\\s*(-?[\\d.,]+)\\s*([a-z\(sym)]*)(?:\\s+(?:to|in|as|=)\\s+([a-z\(sym)]+))?$",
+                                          options: .caseInsensitive)
+        let ns = q as NSString
+        guard let m = re.firstMatch(in: q, range: NSRange(location: 0, length: ns.length)),
+              let n = Double(ns.substring(with: m.range(at: 2)).replacingOccurrences(of: ",", with: "")) else { return nil }
+        func part(_ i: Int) -> String { m.range(at: i).location == NSNotFound ? "" : ns.substring(with: m.range(at: i)) }
+        let rates = Rates.shared
+        rates.refreshIfStale()   // before parsing: currency codes are recognised from the rate table
+        let local = Locale.current.currency?.identifier ?? "USD"
+        guard let from = code(part(1).isEmpty ? part(3) : part(1)),
+              let to = part(4).isEmpty ? (from == local ? nil : local) : code(part(4)), from != to else { return nil }
+        guard let rf = rates.table[from], let rt = rates.table[to] else { return nil }
+        let v = n / rf * rt
+        let out = format(v, digits: abs(v) < 1 ? 4 : 2)
+        let ago = rates.updated.map { RelativeDateTimeFormatter().localizedString(for: $0, relativeTo: Date()) } ?? ""
+        return Answer(kind: .convert, title: "\(format(n, digits: 2)) \(from) = \(out) \(to)", detail: "\(q) · rates updated \(ago)", value: out)
+    }
+
+    private static func code(_ raw: String) -> String? {
+        let s = raw.lowercased()
+        guard !s.isEmpty else { return nil }
+        let rupee = ["NPR", "PKR", "LKR"].contains(Locale.current.currency?.identifier ?? "") ? Locale.current.currency!.identifier : "INR"
+        let names = ["$": "USD", "dollar": "USD", "buck": "USD", "€": "EUR", "euro": "EUR", "£": "GBP", "pound": "GBP",
+                     "¥": "JPY", "yen": "JPY", "yuan": "CNY", "rmb": "CNY", "₹": "INR", "rupee": rupee, "rs": rupee]
+        if let c = names[s] ?? (s.hasSuffix("s") ? names[String(s.dropLast())] : nil) { return c }
+        return s.count == 3 && Rates.shared.table[s.uppercased()] != nil ? s.uppercased() : nil
+    }
+
     private static func unit(_ raw: String) -> Dimension? {
         let s = raw.lowercased().trimmingCharacters(in: .whitespaces)
         return units[s] ?? (s.hasSuffix("s") ? units[String(s.dropLast())] : nil)
@@ -89,6 +122,41 @@ enum Answers {
         add(UnitArea.acres, "acre"); add(UnitArea.hectares, "ha", "hectare")
         return u
     }()
+}
+
+/// Exchange rates (base USD) from open.er-api.com — free, no key, ~160 currencies incl. NPR.
+/// Cached in ~/Library/Application Support/Learn/rates.json, refreshed when older than 12 h. Main-thread only.
+final class Rates {
+    static let shared = Rates()
+    static let changed = Notification.Name("LearnRatesChanged")
+    private(set) var table: [String: Double] = [:]
+    private(set) var updated: Date?
+    private var loading = false
+    private let file = ShortcutStore.shared.dir.deletingLastPathComponent().appendingPathComponent("rates.json")
+
+    private init() {
+        guard let d = try? Data(contentsOf: file), let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any],
+              let r = j["rates"] as? [String: Double], let t = j["updated"] as? Double else { return }
+        table = r
+        updated = Date(timeIntervalSince1970: t)
+    }
+
+    func refreshIfStale() {
+        guard !loading, (updated?.timeIntervalSinceNow ?? -.infinity) < -12 * 3600 else { return }
+        loading = true
+        URLSession.shared.dataTask(with: URL(string: "https://open.er-api.com/v6/latest/USD")!) { data, _, _ in
+            let rates = data.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }?["rates"] as? [String: Double]
+            DispatchQueue.main.async {
+                self.loading = false
+                guard let rates, !rates.isEmpty else { return }
+                self.table = rates
+                self.updated = Date()
+                let j: [String: Any] = ["rates": rates, "updated": Date().timeIntervalSince1970]
+                try? JSONSerialization.data(withJSONObject: j).write(to: self.file, options: .atomic)
+                NotificationCenter.default.post(name: Self.changed, object: nil)
+            }
+        }.resume()
+    }
 }
 
 /// Tiny arithmetic parser (+ − × ÷ ^ %, parentheses, unary minus, sqrt, pi). NSExpression is avoided:

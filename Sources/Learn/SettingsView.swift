@@ -212,7 +212,12 @@ private struct GeneralTab: View {
                 }
             }
             Section("On screen") {
-                Toggle("Show shortcuts as you press them (bottom centre)", isOn: $prefs.showKeyHUD)
+                LabeledContent("Shortcut display (keys you press, shown on screen)") {
+                    HStack {
+                        Text(prefs.showKeyHUD ? "On" : "Off").foregroundStyle(.secondary)
+                        Button("Customize…") { HUDStyleWindow.shared.show() }
+                    }
+                }
                 Toggle("Both ⌃ keys together (left + right) = right-click at the pointer", isOn: $prefs.chordRightClick)
                 Text("Pointer mode (\(learnKeys[LearnActions.pointer]?.shortcut.display ?? "")): HJKL or arrows move, ⇧ slow, ⌥ scroll, Space click, D double-click, R right-click, V drag, the same hotkey again jumps to your next screen, ⎋ exit.")
                     .font(.caption).foregroundStyle(.secondary)
@@ -221,7 +226,7 @@ private struct GeneralTab: View {
                 Toggle("Show on-screen items (buttons, fields, links)", isOn: $prefs.showScreenItems)
                 Toggle("Show menu commands without a shortcut", isOn: $prefs.showMenuCommands)
                 Toggle("Search files in your home folder (Spotlight index)", isOn: $prefs.searchFiles)
-                Toggle("Quick answers: calculator, unit conversions (5 km to mi), definitions", isOn: $prefs.quickAnswers)
+                Toggle("Quick answers: calculator, conversions (5 km to mi, 100 usd to npr), definitions", isOn: $prefs.quickAnswers)
             }
             Section("Shortcut database") {
                 Stepper("Rescan an app when used, if older than \(prefs.rescanMinutes) min",

@@ -27,6 +27,7 @@ system + app changes; per-app "Refresh".
 | `SpotlightKey.swift` | optional ⌘Space takeover: rewrites Spotlight's symbolichotkeys #64 (off, or moved to ⌥Space) + `activateSettings -u`; uninstall.sh restores |
 | `Answers.swift` | instant answers in top-level search: calculator (own parser, no NSExpression), unit conversions (Measurement), definitions (DCSCopyTextDefinition) |
 | `FileSearch.swift` | home-folder file search via NSMetadataQuery (Spotlight index); icons from UTI so no folder-access prompts |
+| `HUDStyleView.swift` | "Shortcut Display" window (Settings ▸ Customize…): on/off, 9 positions, font, sizes, colors, frosted, padding, corners, shadow, duration, fade/slide/pop/none; live preview. Stored as `HUDStyle` JSON in prefs |
 | `Fuzzy.swift` | tiny fuzzy scorer (subsequence + prefix bonus) |
 | `build.sh` | `swift build -c release` → assemble `Learn.app` (Info.plist, LSUIElement) → codesign w/ Apple Development id → copy to `~/Applications` (so Spotlight finds it) |
 
