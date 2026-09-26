@@ -1,12 +1,14 @@
 import AppKit
 import Combine
 
-/// A search row: an app's shortcut / command / on-screen item, or — in any list — instant answer, app, or file.
+/// A search row: an app's shortcut / command / on-screen item, or — in any list — instant answer, app, file,
+/// or another scanned app's shortcut (`global`, runs without opening that app first).
 enum Hit: Identifiable, Hashable {
-    case shortcut(Shortcut), answer(Answer), app(AppEntry), file(FileHit)
+    case shortcut(Shortcut), answer(Answer), app(AppEntry), file(FileHit), global(Shortcut, AppEntry)
     var id: String {
         switch self {
         case .shortcut(let s): s.id
+        case .global(let s, let a): "global:" + a.id + "|" + s.id
         case .answer(let a): "answer:" + a.title
         case .app(let a): "app:" + a.id
         case .file(let f): "file:" + f.url.path
@@ -51,6 +53,7 @@ final class SearchModel: ObservableObject {
             notice = nil
             files = []
             fileSearch.search(Prefs.shared.searchFiles && currentApp != Self.settingsEntry ? query : "")
+            searchGlobal()
             recompute()
         }
     }
@@ -78,6 +81,7 @@ final class SearchModel: ObservableObject {
     private let fileSearch = FileSearch()
 
     init() {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.rebuildGlobalIndex() }   // warm the cache before first open
         NotificationCenter.default.addObserver(forName: Rates.changed, object: nil, queue: .main) { [weak self] _ in
             if self?.query.isEmpty == false { self?.recompute(keepSelection: true) }   // first rates arrived mid-query
         }
@@ -89,6 +93,7 @@ final class SearchModel: ObservableObject {
         bag = NotificationCenter.default.publisher(for: ShortcutStore.changed)
             .receive(on: DispatchQueue.main)
             .sink { [weak self] n in
+                self?.globalDirty = true   // rescan or binding change: rebuild the from-anywhere index on next open
                 if case .shortcuts(let a) = self?.mode, a.id == n.object as? String { self?.recompute(keepSelection: true) }
             }
     }
@@ -108,6 +113,7 @@ final class SearchModel: ObservableObject {
         notice = nil
         trusted = AXIsProcessTrusted()
         query = ""
+        rebuildGlobalIndex()
         screen = ("", [:]); screenRows = []
         if settings {
             scanScreen(appID: Self.settingsEntry.id, pid: getpid(), windowTitle: SettingsWindow.title)
@@ -122,7 +128,11 @@ final class SearchModel: ObservableObject {
         focusTick += 1
         DispatchQueue.global(qos: .utility).async {
             let fresh = AppCatalog.load()
-            DispatchQueue.main.async { self.allApps = fresh; if self.currentApp == nil { self.recompute(keepSelection: true) } }
+            DispatchQueue.main.async {
+                if fresh.map(\.id) != self.allApps.map(\.id) { self.globalDirty = true }   // apps installed / removed
+                self.allApps = fresh
+                if self.currentApp == nil { self.recompute(keepSelection: true) }
+            }
         }
     }
 
@@ -141,7 +151,8 @@ final class SearchModel: ObservableObject {
                     .map(\.0)
             // Anywhere, not just the top level: answer on top; definition, apps and files after this app's items.
             let (top, rest) = app == Self.settingsEntry ? ([], []) : extras(apps: rankedApps().filter { Fuzzy.rank(query, title: $0.name) ?? 0 >= 6_000 }.prefix(5), files: 12)
-            results = top + shortcuts.map(Hit.shortcut) + rest
+            let elsewhere = app == Self.settingsEntry ? [] : globalHits(excluding: app.id, limit: 8)
+            results = top + shortcuts.map(Hit.shortcut) + elsewhere + rest
             scanning = Scanner.shared.busy.contains(app.id)
             if scanning { info = "Scanning \(app.name)…" }
             else if app == Self.settingsEntry { info = "Search Learn's settings · ↩ go there" }
@@ -153,8 +164,12 @@ final class SearchModel: ObservableObject {
         } else {
             let apps = rankedApps()
             let (top, rest) = extras(apps: [], files: 40)
-            results = top + apps.map(Hit.app) + rest
-            info = "\(apps.count) apps\(files.isEmpty ? "" : " · \(files.count) files") · ↩ open"
+            let global = globalHits(excluding: nil, limit: 25)
+            // Apps named like the query first, then every app's matching shortcuts, then looser app matches.
+            let strong = query.isEmpty ? apps : apps.filter { Fuzzy.rank(query, title: $0.name) ?? 0 >= 6_000 }
+            let weak = query.isEmpty ? [] : apps.filter { Fuzzy.rank(query, title: $0.name) ?? 0 < 6_000 }
+            results = top + strong.map(Hit.app) + global + weak.map(Hit.app) + rest
+            info = "\(apps.count) apps\(global.isEmpty ? "" : " · \(global.count) shortcuts")\(files.isEmpty ? "" : " · \(files.count) files") · ↩ open"
         }
         if !keepSelection || selection >= count { selection = 0 }
         updateHighlight()
@@ -166,6 +181,68 @@ final class SearchModel: ObservableObject {
         if query.isEmpty { return allApps.sorted { (rank($0), $1.name.lowercased()) > (rank($1), $0.name.lowercased()) } }
         return allApps.compactMap { a in Fuzzy.rank(query, title: a.name).map { (a, $0 * 10 + rank(a)) } }
             .sorted { ($0.1, -$0.0.name.count) > ($1.1, -$1.0.name.count) }.map(\.0)
+    }
+
+    // MARK: Shortcuts from anywhere
+
+    /// Every scanned app's shortcuts, so "brave profile" or "record screen" run without opening the app first.
+    /// Built on main when the panel opens (search text cached across opens); ranked off main per keystroke.
+    private struct GlobalItem { let app: AppEntry; let shortcut: Shortcut; let context: String }
+    private var globalIndex: [GlobalItem] = []
+    private var globalDirty = true
+    private var contextCache: [String: String] = [:]   // app id | shortcut id → search text (synonym expansion is slow)
+    private var globalFound: [(hit: Hit, app: String)] = []
+    private var globalGeneration = 0
+    private let globalQueue = DispatchQueue(label: "learn.global-search", qos: .userInitiated)
+
+    private func rebuildGlobalIndex() {
+        guard globalDirty else { return }
+        globalDirty = false
+        let apps = Dictionary(allApps.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        var index: [GlobalItem] = []
+        for entry in ShortcutStore.shared.all {
+            guard let app = apps[entry.bundleID] else { continue }   // uninstalled apps and helper processes
+            let name = app.name.lowercased()
+            for s in Self.withBindings(entry.shortcuts, app: app.id)
+            where s.path.first != ElementScanner.marker && s.path.first != LearnActions.group {
+                let key = app.id + "|" + s.id
+                let context = contextCache[key] ?? { let c = s.searchText + " " + name; contextCache[key] = c; return c }()
+                index.append(GlobalItem(app: app, shortcut: s, context: context))
+            }
+        }
+        globalIndex = index
+    }
+
+    /// Ranks the index for the current query off main; stale answers (older keystrokes) are dropped.
+    private func searchGlobal() {
+        globalGeneration += 1
+        let generation = globalGeneration, q = query
+        guard q.count >= 3 else { globalFound = []; return }
+        let index = globalIndex, keyless = Prefs.shared.showMenuCommands
+        let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        globalQueue.async { [weak self] in
+            var scored: [(GlobalItem, Int)] = []
+            for item in index where keyless || item.shortcut.hasKey {
+                // Only fairly strong matches: every word hits the title, menu path or app name.
+                guard let r = Fuzzy.rank(q, title: item.shortcut.title, context: item.context, keys: item.shortcut.display), r >= 4_000
+                else { continue }
+                scored.append((item, r * 2 + (running.contains(item.app.id) ? 1 : 0)))
+            }
+            var seen = Set<String>()   // the same standard item in many apps (Emoji & Symbols…): list it once
+            let found = scored.sorted { $0.1 > $1.1 }
+                .filter { seen.insert($0.0.shortcut.title.lowercased() + "|" + $0.0.shortcut.display).inserted }
+                .prefix(40).map { (hit: Hit.global($0.0.shortcut, $0.0.app), app: $0.0.app.id) }
+            DispatchQueue.main.async {
+                guard let self, generation == self.globalGeneration else { return }
+                self.globalFound = found
+                self.recompute(keepSelection: true)
+            }
+        }
+    }
+
+    private func globalHits(excluding: String?, limit: Int) -> [Hit] {
+        guard query.count >= 3 else { return [] }
+        return globalFound.filter { $0.app != excluding }.prefix(limit).map(\.hit)
     }
 
     /// Spotlight-style rows around the main list: calculator / conversion on top; then apps, a definition, files.
@@ -260,6 +337,9 @@ final class SearchModel: ObservableObject {
         } else {
             switch results[selection] {
             case .shortcut: break   // only listed inside an app, handled above
+            case .global(let s, let app):   // another app's shortcut: Executor activates or launches it, then presses the item
+                onClose(false)
+                Executor.run(s, in: app)
             case .app(let a) where alt:
                 onClose(false)
                 NSWorkspace.shared.openApplication(at: a.url, configuration: NSWorkspace.OpenConfiguration())

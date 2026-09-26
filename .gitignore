@@ -1,3 +1,22 @@
+# Only source code belongs in this repo.
+
+# Build output
 .build/
 build/
 dist/
+.swiftpm/
+*.xcodeproj/
+DerivedData/
+
+# Launch videos, renders and their tooling (not app code)
+brag-output/
+*.mp4
+*.mov
+*.wav
+*.mp3
+
+# Editor / OS noise
+.DS_Store
+.vscode/
+.idea/
+*.swp

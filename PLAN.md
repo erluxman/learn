@@ -38,6 +38,10 @@ system + app changes; per-app "Refresh".
    Search matches title + menu path + key glyphs. Esc / ⌫ on empty → back to apps.
    - Cached → show instantly. Not cached → scan (app running: direct; not running: launch hidden,
      scan, quit again).
+   - **From anywhere**: any query (3+ chars) also ranks every scanned app's shortcuts (app name counts as a search word,
+     e.g. "brave profile", "record screen"). Top level: after apps named like the query; inside an app: after its own items
+     (max 8). Duplicates of standard items (Emoji & Symbols…) listed once, running apps preferred. Index built on panel
+     open (search text cached), ranked off main per keystroke. ↩ = Executor: activates or launches the app, presses the item.
 4. **Execute**: if app running → activate + press menu item via AX (works even if key changed).
    If not running → launch then execute. System shortcuts → post keystroke.
 5. **Sync**:

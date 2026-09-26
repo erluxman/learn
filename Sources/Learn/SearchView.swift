@@ -77,6 +77,7 @@ struct SearchView: View {
                         Group {
                             switch hit {
                             case .shortcut(let s): ShortcutRow(s: s, selected: i == model.selection)
+                            case .global(let s, let a): ShortcutRow(s: s, selected: i == model.selection, app: a)
                             case .app(let a): AppRow(app: a, selected: i == model.selection)
                             case .file(let f): FileRow(f: f, selected: i == model.selection)
                             case .answer(let a): AnswerRow(a: a, selected: i == model.selection)
@@ -194,12 +195,15 @@ private struct AnswerRow: View {
 private struct ShortcutRow: View {
     let s: Shortcut
     let selected: Bool
+    var app: AppEntry? = nil   // another app's shortcut found from anywhere: show its icon and name
     var body: some View {
         HStack(spacing: 10) {
+            if let app { Image(nsImage: AppCatalog.icon(app)).resizable().frame(width: 28, height: 28) }
             VStack(alignment: .leading, spacing: 1) {
                 Text(s.title).font(.system(size: 14))
-                if !s.location.isEmpty {
-                    Text(s.location).font(.system(size: 11)).foregroundStyle(selected ? .white.opacity(0.75) : .secondary)
+                let location = app.map { s.location.isEmpty ? $0.name : "\($0.name) ▸ \(s.location)" } ?? s.location
+                if !location.isEmpty {
+                    Text(location).font(.system(size: 11)).foregroundStyle(selected ? .white.opacity(0.75) : .secondary)
                 }
             }
             Spacer()
