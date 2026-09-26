@@ -1,11 +1,13 @@
 import AppKit
 
-/// Look of the shortcut bubble. Edited in Settings ▸ General ▸ Shortcut display ▸ Customize… (HUDStyleView).
+/// Look of the shortcut bubble. Edited in Settings ▸ On Screen (HUDStyleSections).
 struct HUDStyle: Codable, Hashable {
     enum Position: String, Codable, CaseIterable {
         case topLeft, topCenter, topRight, middleLeft, center, middleRight, bottomLeft, bottomCenter, bottomRight
     }
     enum Motion: String, Codable, CaseIterable { case fade, slide, pop, none }
+    /// What the box is made of. `tinted` = Liquid Glass colored by `background`; `frosted` = blur + `background` on top.
+    enum Backdrop: String, Codable, CaseIterable { case solid, glass, tinted, frosted }
     struct RGBA: Codable, Hashable {
         var r, g, b, a: Double
         init(_ c: NSColor) {
@@ -24,7 +26,8 @@ struct HUDStyle: Codable, Hashable {
     var showCaption = true            // the command name under the keys
     var textColor = RGBA(.white)
     var background = RGBA(NSColor(white: 0.1, alpha: 0.55))
-    var frosted = true                // blur what's behind, tinted by `background`
+    var frosted = true                // before `backdrop` existed: blur what's behind, tinted by `background`
+    var backdrop: Backdrop? = .tinted // nil in styles saved before it existed → derived from `frosted`
     var cornerRadius = 14.0
     var paddingH = 22.0
     var paddingV = 10.0
@@ -32,6 +35,11 @@ struct HUDStyle: Codable, Hashable {
     var duration = 1.4                // seconds on screen
     var motion = Motion.fade
     var animationSpeed = 0.25         // seconds
+
+    var box: Backdrop {
+        get { backdrop ?? (frosted ? .frosted : .solid) }
+        set { backdrop = newValue }
+    }
 
     func keyFont() -> NSFont { Self.font(font, size: keySize, bold: bold) }
     func captionFont() -> NSFont { Self.font(font, size: captionSize, bold: false) }
@@ -58,6 +66,7 @@ final class KeyHUD {
 
     private var window: NSPanel?
     private var built: HUDStyle?   // style the window was built with; rebuilt when it changes
+    private var sizer: NSView?     // padded text; the window is sized to fit it
     private let keys = NSTextField(labelWithString: "")
     private let caption = NSTextField(labelWithString: "")
     private var sticky: (keys: String, caption: String)?
@@ -124,7 +133,7 @@ final class KeyHUD {
         keys.stringValue = k
         caption.stringValue = String(c.prefix(110))
         caption.isHidden = c.isEmpty || !st.showCaption
-        let target = frame(for: w.contentView!.fittingSize, st)
+        let target = frame(for: (sizer ?? w.contentView!).fittingSize, st)
         let entering = !shown
         shown = true
         guard entering, st.motion != .none else {
@@ -181,11 +190,19 @@ final class KeyHUD {
         func t(_ s: CGFloat) -> CATransform3D {
             CATransform3DScale(CATransform3DMakeTranslation(b.width * (1 - s) / 2, b.height * (1 - s) / 2, 0), s, s, 1)
         }
-        let a = CABasicAnimation(keyPath: "transform")
+        let a: CABasicAnimation
+        if to == 1 {   // spring in, with a touch of overshoot
+            let spring = CASpringAnimation(perceptualDuration: max(st.animationSpeed * 1.6, 0.2), bounce: 0.3)
+            spring.duration = spring.settlingDuration
+            a = spring
+        } else {
+            a = CABasicAnimation(keyPath: "transform")
+            a.duration = st.animationSpeed
+            a.timingFunction = CAMediaTimingFunction(name: .easeIn)
+        }
+        a.keyPath = "transform"
         a.fromValue = t(from)
         a.toValue = t(to)
-        a.duration = st.animationSpeed
-        a.timingFunction = CAMediaTimingFunction(name: .easeOut)
         a.isRemovedOnCompletion = to == 1   // shrunk on exit: stay shrunk until the next show
         a.fillMode = .forwards
         layer.add(a, forKey: "pop")
@@ -221,31 +238,6 @@ final class KeyHUD {
         }()
         p.hasShadow = st.shadow
 
-        let box = NSView()
-        box.wantsLayer = true
-        box.layer?.cornerRadius = st.cornerRadius
-        box.layer?.masksToBounds = true
-        func fill(_ v: NSView) {
-            v.translatesAutoresizingMaskIntoConstraints = false
-            box.addSubview(v)
-            NSLayoutConstraint.activate([
-                v.leadingAnchor.constraint(equalTo: box.leadingAnchor), v.trailingAnchor.constraint(equalTo: box.trailingAnchor),
-                v.topAnchor.constraint(equalTo: box.topAnchor), v.bottomAnchor.constraint(equalTo: box.bottomAnchor),
-            ])
-        }
-        if st.frosted {
-            let fx = NSVisualEffectView()
-            fx.material = .hudWindow
-            fx.blendingMode = .behindWindow
-            fx.state = .active
-            fx.appearance = NSAppearance(named: st.textColor.ns.brightnessComponentSafe > 0.5 ? .vibrantDark : .vibrantLight)
-            fill(fx)
-        }
-        let tint = NSView()
-        tint.wantsLayer = true
-        tint.layer?.backgroundColor = st.background.ns.cgColor
-        fill(tint)
-
         keys.font = st.keyFont()
         keys.textColor = st.textColor.ns
         keys.alignment = .center
@@ -255,12 +247,63 @@ final class KeyHUD {
         keys.removeFromSuperview(); caption.removeFromSuperview()
         let stack = NSStackView(views: [keys, caption])
         stack.orientation = .vertical
+        stack.alignment = .centerX
         stack.spacing = 2
-        stack.edgeInsets = NSEdgeInsets(top: st.paddingV, left: st.paddingH, bottom: st.paddingV + 2, right: st.paddingH)
-        fill(stack)
+        // Padding as explicit constraints, so every backdrop (glass included) keeps it.
+        let content = NSView()
+        pin(stack, in: content, NSEdgeInsets(top: st.paddingV, left: st.paddingH, bottom: st.paddingV + 2, right: st.paddingH))
 
-        p.contentView = box
+        let dark = st.textColor.ns.brightnessComponentSafe > 0.5
+        var root: NSView
+        switch st.box {
+        case .glass, .tinted:
+            if #available(macOS 26, *) {
+                let glass = NSGlassEffectView()
+                glass.style = st.box == .glass ? .clear : .regular
+                glass.cornerRadius = st.cornerRadius
+                if st.box == .tinted { glass.tintColor = st.background.ns }   // the glass itself is colored; its opacity = how strongly
+                glass.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                glass.contentView = content
+                root = glass
+                break
+            }
+            fallthrough   // no Liquid Glass before macOS 26: blur instead
+        case .frosted, .solid:
+            let box = NSView()
+            box.wantsLayer = true
+            box.layer?.cornerRadius = st.cornerRadius
+            box.layer?.cornerCurve = .continuous
+            box.layer?.masksToBounds = true
+            if st.box != .solid {
+                let fx = NSVisualEffectView()
+                fx.material = .hudWindow
+                fx.blendingMode = .behindWindow
+                fx.state = .active
+                fx.appearance = NSAppearance(named: dark ? .vibrantDark : .vibrantLight)
+                pin(fx, in: box)
+            }
+            let tint = NSView()
+            tint.wantsLayer = true
+            tint.layer?.backgroundColor = (st.box == .glass ? st.background.ns.withAlphaComponent(0.25) : st.background.ns).cgColor
+            pin(tint, in: box)
+            pin(content, in: box)
+            root = box
+        }
+        root.wantsLayer = true
+        sizer = content
+        p.contentView = root
         built = st
+    }
+
+    private func pin(_ v: NSView, in parent: NSView, _ inset: NSEdgeInsets = NSEdgeInsets()) {
+        v.translatesAutoresizingMaskIntoConstraints = false
+        parent.addSubview(v)
+        NSLayoutConstraint.activate([
+            v.leadingAnchor.constraint(equalTo: parent.leadingAnchor, constant: inset.left),
+            v.trailingAnchor.constraint(equalTo: parent.trailingAnchor, constant: -inset.right),
+            v.topAnchor.constraint(equalTo: parent.topAnchor, constant: inset.top),
+            v.bottomAnchor.constraint(equalTo: parent.bottomAnchor, constant: -inset.bottom),
+        ])
     }
 }
 

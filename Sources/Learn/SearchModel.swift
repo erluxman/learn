@@ -26,25 +26,25 @@ final class SearchModel: ObservableObject {
     private static let settingsIndex: [(String, SettingsWindow.Tab)] = [
         ("Permissions", .permissions), ("Accessibility permission", .permissions), ("Send keystrokes & clicks permission", .permissions),
         ("Input Monitoring permission", .permissions), ("Launch at login", .permissions),
-        ("General", .general), ("Open Learn hotkey", .general), ("Replace Spotlight (⌘Space opens Learn)", .general), ("Label clickable items hotkey", .general),
-        ("Right-click the focused item hotkey", .general), ("Open Learn Settings hotkey", .general),
-        ("Pointer mode hotkey (control the pointer with the keyboard)", .general),
-        ("Move window to next screen hotkey", .general), ("Shortcut display: customize look, position, font, color, animation", .general),
-        ("Right-click with both control keys", .general),
-        ("Record-shortcut key (inside Learn)", .general), ("Right-click key (inside Learn)", .general),
-        ("Show on-screen items", .general), ("Search files (Spotlight index)", .general),
-        ("Quick answers: calculator, unit conversions, definitions", .general), ("Show menu commands without a shortcut", .general),
-        ("Rescan interval", .general), ("Rescan running apps", .general), ("Scan all installed apps", .general),
-        ("Show database in Finder", .general), ("Debug log", .general),
-        ("Shortcuts", .shortcuts), ("Shortcuts you recorded in Learn", .shortcuts), ("Remove a recorded shortcut", .shortcuts),
+        ("Appearance", .appearance), ("Glass: clear or regular blur, darkness", .appearance), ("Tint color of the glass", .appearance),
+        ("Corner roundness", .appearance), ("Window shadow", .appearance), ("Pointer light", .appearance),
+        ("Jelly wobble when dragging windows", .appearance), ("Hover motion", .appearance), ("App font, typeface", .appearance), ("Icon style", .appearance),
+        ("Hotkeys", .hotkeys), ("Open Learn hotkey", .hotkeys), ("Replace Spotlight (⌘Space opens Learn)", .hotkeys), ("Label clickable items hotkey", .hotkeys),
+        ("Right-click the focused item hotkey", .hotkeys), ("Open Learn Settings hotkey", .hotkeys),
+        ("Pointer mode hotkey (control the pointer with the keyboard)", .hotkeys), ("Move window to next screen hotkey", .hotkeys),
+        ("Learn Panel", .panel), ("Record-shortcut key (inside Learn)", .panel), ("Right-click key (inside Learn)", .panel),
+        ("On Screen", .display), ("Shortcut display: customize look, position, font, color, animation", .display),
+        ("Right-click with both control keys", .display), ("Pointer mode", .display),
+        ("Search", .search), ("Show on-screen items", .search), ("Search files (Spotlight index)", .search),
+        ("Quick answers: calculator, unit conversions, definitions", .search), ("Show menu commands without a shortcut", .search),
+        ("Advanced", .advanced), ("Rescan interval", .advanced), ("Rescan running apps", .advanced), ("Scan all installed apps", .advanced),
+        ("Show database in Finder", .advanced), ("Debug log", .advanced),
+        ("My Shortcuts", .shortcuts), ("Shortcuts you recorded in Learn", .shortcuts), ("Remove a recorded shortcut", .shortcuts),
     ]
-    private static func tabName(_ t: SettingsWindow.Tab) -> String {
-        switch t { case .permissions: "Permissions"; case .general: "General"; case .shortcuts: "Shortcuts" }
-    }
     private static let settingsRows = settingsIndex.map {
-        Shortcut(path: [settingsGroup, tabName($0.1), $0.0], key: "", keyCode: nil, mods: [])
+        Shortcut(path: [settingsGroup, $0.1.title, $0.0], key: "", keyCode: nil, mods: [])
     }
-    private static let settingsTabs = Dictionary(settingsIndex.map { ([settingsGroup, tabName($0.1), $0.0], $0.1) }, uniquingKeysWith: { a, _ in a })
+    private static let settingsTabs = Dictionary(settingsIndex.map { ([settingsGroup, $0.1.title, $0.0], $0.1) }, uniquingKeysWith: { a, _ in a })
 
     @Published var mode: Mode = .apps
     @Published var query = "" {
@@ -65,6 +65,20 @@ final class SearchModel: ObservableObject {
     @Published private(set) var notice: String?   // one-off message; wins over `info` until the next navigation
     @Published var trusted = AXIsProcessTrusted()
     @Published var focusTick = 0
+    @Published var presentTick = 0   // panel shown: replays the entrance animation
+    /// Pointer position of the last hover-select; rows that slide under a still pointer (scroll, new results) don't grab the selection.
+    var lastMouse = NSPoint.zero
+    /// The last selection change came from the pointer: the row is already on screen, so the list shouldn't scroll.
+    var selectedByHover = false
+
+    /// Hovering a row selects it, but only when the pointer really moved.
+    func hover(_ i: Int) {
+        let m = NSEvent.mouseLocation
+        guard m != lastMouse, i != selection, i < results.count else { return }
+        lastMouse = m
+        selectedByHover = true
+        selection = i
+    }
 
     // Shortcut recorder (⌘↩ on a row)
     @Published private(set) var recording: Shortcut?
@@ -126,6 +140,8 @@ final class SearchModel: ObservableObject {
             recompute()
         }
         focusTick += 1
+        presentTick += 1
+        lastMouse = NSEvent.mouseLocation
         DispatchQueue.global(qos: .utility).async {
             let fresh = AppCatalog.load()
             DispatchQueue.main.async {
@@ -169,7 +185,7 @@ final class SearchModel: ObservableObject {
             let strong = query.isEmpty ? apps : apps.filter { Fuzzy.rank(query, title: $0.name) ?? 0 >= 6_000 }
             let weak = query.isEmpty ? [] : apps.filter { Fuzzy.rank(query, title: $0.name) ?? 0 < 6_000 }
             results = top + strong.map(Hit.app) + global + weak.map(Hit.app) + rest
-            info = "\(apps.count) apps\(global.isEmpty ? "" : " · \(global.count) shortcuts")\(files.isEmpty ? "" : " · \(files.count) files") · ↩ open"
+            info = "\(apps.count) apps\(global.isEmpty ? "" : " · \(global.count) shortcuts")\(files.isEmpty ? "" : " · \(files.count) files")"
         }
         if !keepSelection || selection >= count { selection = 0 }
         updateHighlight()

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Build Learn.app, sign it, install to ~/Applications (Spotlight-indexed), relaunch.
+# Build Learn.app, sign it, install to /Applications (Spotlight-indexed), relaunch.
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -16,9 +16,9 @@ SIGN_ID="${SIGN_ID:-$(security find-identity -v -p codesigning | awk -F'"' 'NR==
 codesign --force --sign "${SIGN_ID:--}" --identifier com.erluxman.learn "$APP"
 
 pkill -x Learn || true
-mkdir -p ~/Applications
-rm -rf ~/Applications/Learn.app
-ditto "$APP" ~/Applications/Learn.app && rm -rf build   # one copy only, so Spotlight opens the right one
-mdimport ~/Applications/Learn.app 2>/dev/null || true
-[[ "${1:-}" == "--no-open" ]] || open ~/Applications/Learn.app
-echo "Installed ~/Applications/Learn.app"
+rm -rf ~/Applications/Learn.app   # older builds went here; keep one copy
+rm -rf /Applications/Learn.app
+ditto "$APP" /Applications/Learn.app && rm -rf build   # one copy only, so Spotlight opens the right one
+mdimport /Applications/Learn.app 2>/dev/null || true
+[[ "${1:-}" == "--no-open" ]] || open /Applications/Learn.app
+echo "Installed /Applications/Learn.app"

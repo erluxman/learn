@@ -27,9 +27,11 @@ system + app changes; per-app "Refresh".
 | `SpotlightKey.swift` | optional ⌘Space takeover: rewrites Spotlight's symbolichotkeys #64 (off, or moved to ⌥Space) + `activateSettings -u`; uninstall.sh restores |
 | `Answers.swift` | instant answers in top-level search: calculator (own parser, no NSExpression), unit conversions (Measurement), definitions (DCSCopyTextDefinition) |
 | `FileSearch.swift` | home-folder file search via NSMetadataQuery (Spotlight index); icons from UTI so no folder-access prompts |
-| `HUDStyleView.swift` | "Shortcut Display" window (Settings ▸ Customize…): on/off, 9 positions, font, sizes, colors, frosted, padding, corners, shadow, duration, fade/slide/pop/none; live preview. Stored as `HUDStyle` JSON in prefs |
+| `HUDStyleView.swift` | `HUDStyleSections`: shortcut bubble look, embedded in Settings ▸ On Screen; live mini-screen preview (tap a spot = position), font, sizes, colors, frosted (Liquid Glass), padding, corners, shadow, duration, fade/slide/pop/none. Stored as `HUDStyle` JSON in prefs |
+| `Theme.swift` | design system: radii, springs, `liquidGlass(in:)` (macOS 26 glass, material fallback), `GlassGroup`, `Keycaps`, `IconTile`, `KeyHint` |
+| `SettingsView.swift` | sidebar Settings (Permissions · Hotkeys · Learn Panel · On Screen · Search · Advanced · My Shortcuts), hero per pane, `KeyRecorder` |
 | `Fuzzy.swift` | tiny fuzzy scorer (subsequence + prefix bonus) |
-| `build.sh` | `swift build -c release` → assemble `Learn.app` (Info.plist, LSUIElement) → codesign w/ Apple Development id → copy to `~/Applications` (so Spotlight finds it) |
+| `build.sh` | `swift build -c release` → assemble `Learn.app` (Info.plist, LSUIElement) → codesign w/ Apple Development id → copy to `/Applications` (so Spotlight finds it; removes any old `~/Applications` copy) |
 
 ## Behavior
 1. **Trigger**: ⌥Space hotkey, or open "Learn" from Spotlight (reopen event → show panel), or menu-bar icon.
@@ -58,10 +60,10 @@ system + app changes; per-app "Refresh".
 4. System shortcuts + custom overrides parser
 5. Executor
 6. Watchers + refresh + bulk scan + status menu
-7. Build, sign, install to ~/Applications, smoke test
+7. Build, sign, install to /Applications, smoke test
 
 ## Status (all steps done)
-Build/install: `./build.sh` → `~/Applications/Learn.app`. DB: `~/Library/Application Support/Learn/db/*.json`.
+Build/install: `./build.sh` → `/Applications/Learn.app`. DB: `~/Library/Application Support/Learn/db/*.json`.
 
 ## Known limits
 - Only shortcuts that appear in the menu bar are readable. In-editor keybindings (VS Code, JetBrains,
@@ -99,5 +101,5 @@ Nothing is written into the apps' own preferences.
   + `iconutil -c icns`).
 - `./uninstall.sh [--purge]` → quits, removes /Applications + ~/Applications copies, `tccutil reset`
   Accessibility / ListenEvent / PostEvent; `--purge` also deletes data + settings.
-- `./build.sh` is the dev loop (installs to ~/Applications). Don't mix with the DMG copy in /Applications.
+- `./build.sh` is the dev loop (installs to /Applications, replacing the DMG copy there).
 - Opening the app → Settings (Permissions tab if anything's missing); the hotkey → search. Silent at login.

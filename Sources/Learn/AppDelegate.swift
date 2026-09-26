@@ -51,7 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.syncCustomKeys() }
         // Opening the app → Settings; the hotkey → search. Silent when started at login.
-        if !Self.launchedAsLoginItem() { SettingsWindow.shared.show(AXIsProcessTrusted() ? .general : .permissions) }
+        if !Self.launchedAsLoginItem() { SettingsWindow.shared.show(AXIsProcessTrusted() ? .hotkeys : .permissions) }
     }
 
     private static func launchedAsLoginItem() -> Bool {

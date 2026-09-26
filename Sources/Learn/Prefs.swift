@@ -21,6 +21,7 @@ final class Prefs: ObservableObject {
     @Published var debugLog: Bool { didSet { d.set(debugLog, forKey: "debugLog") } }
     @Published var showKeyHUD: Bool { didSet { d.set(showKeyHUD, forKey: "showKeyHUD") } }
     @Published var hudStyle: HUDStyle { didSet { d.set(try? JSONEncoder().encode(hudStyle), forKey: "hudStyle") } }
+    @Published var appearance: Appearance { didSet { d.set(try? JSONEncoder().encode(appearance), forKey: "appearance") } }
     @Published var searchFiles: Bool { didSet { d.set(searchFiles, forKey: "searchFiles") } }
     @Published var quickAnswers: Bool { didSet { d.set(quickAnswers, forKey: "quickAnswers") } }
     @Published var chordRightClick: Bool { didSet { d.set(chordRightClick, forKey: "chordRightClick") } }
@@ -38,6 +39,7 @@ final class Prefs: ObservableObject {
         debugLog = d.bool(forKey: "debugLog")
         showKeyHUD = d.bool(forKey: "showKeyHUD")
         hudStyle = d.data(forKey: "hudStyle").flatMap { try? JSONDecoder().decode(HUDStyle.self, from: $0) } ?? HUDStyle()
+        appearance = d.data(forKey: "appearance").flatMap { try? JSONDecoder().decode(Appearance.self, from: $0) } ?? Appearance()
         searchFiles = d.bool(forKey: "searchFiles")
         quickAnswers = d.bool(forKey: "quickAnswers")
         chordRightClick = d.bool(forKey: "chordRightClick")

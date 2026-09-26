@@ -4,7 +4,8 @@ import SwiftUI
 /// Borderless floating panel, Spotlight-style. Closes on Esc / click-away.
 final class Panel: NSPanel, NSWindowDelegate {
     init(model: SearchModel) {
-        super.init(contentRect: NSRect(x: 0, y: 0, width: 720, height: 480),
+        let m = JellyMotion.margin   // clear room around the glass so it can wobble when dragged
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 720 + 2 * m, height: 480 + 2 * m),
                    styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
                    backing: .buffered, defer: false)
         isFloatingPanel = true
@@ -12,23 +13,35 @@ final class Panel: NSPanel, NSWindowDelegate {
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .transient]
         isOpaque = false
         backgroundColor = .clear
-        hasShadow = true
+        hasShadow = false   // glass draws its own; a window shadow would outline the transparent frame
         isMovableByWindowBackground = true
         hidesOnDeactivate = false
         delegate = self
-        contentView = NSHostingView(rootView: SearchView(model: model))
+        motion.attach(self)
+        contentView = NSHostingView(rootView: AppearanceRoot { SearchView(model: model).modifier(Jelly(motion: motion)).padding(m) })
     }
+
+    private let motion = JellyMotion()
 
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { true }
 
     func present() {
+        var origin = frame.origin
         if let screen = NSScreen.main {
             let f = screen.visibleFrame
-            setFrameOrigin(NSPoint(x: f.midX - frame.width / 2, y: f.maxY - frame.height - f.height * 0.15))
+            origin = NSPoint(x: f.midX - frame.width / 2, y: f.maxY - frame.height - f.height * 0.15)
         }
+        setFrameOrigin(origin)
+        let entering = !isVisible
+        if entering { alphaValue = 0 }   // SwiftUI springs the glass in; the window only fades
         NSApp.activate(ignoringOtherApps: true)
         makeKeyAndOrderFront(nil)
+        guard entering else { return }
+        NSAnimationContext.runAnimationGroup { ctx in
+            ctx.duration = 0.14
+            animator().alphaValue = 1
+        }
     }
 
     /// Hide the app too, so focus returns to the app the user was in (like Spotlight).
