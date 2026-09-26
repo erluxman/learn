@@ -184,7 +184,7 @@ struct HUDStyleSections: View {
                         percent: Bool = false) -> some View {
         HStack(alignment: .center) {
             Text(title)
-            Slider(value: value, in: range)
+            Slider(value: value, in: range).sliderTicks(value.wrappedValue, in: range)
             Text(String(format: fmt, percent ? value.wrappedValue * 100 : value.wrappedValue)).monospacedDigit().foregroundStyle(.secondary).frame(width: 56, alignment: .trailing)
         }
     }

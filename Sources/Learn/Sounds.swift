@@ -35,9 +35,57 @@ enum SoundEffect: String, Codable, CaseIterable, Identifiable {
 enum Sounds {
     enum Kind { case click, shortcut }
 
+    private static var lastClick: CFTimeInterval = 0
+    private static var lastTick: CFTimeInterval = 0
+
     static func play(_ kind: Kind) {
         let look = Prefs.shared.appearance
+        if kind == .click {   // a control with its own sound and the app-wide feedback below can both fire: one sound
+            let now = CACurrentMediaTime()
+            guard now - lastClick > 0.08 else { return }
+            lastClick = now
+        }
         play(kind == .click ? look.clickSound : look.shortcutSound, volume: look.soundVolume)
+    }
+
+    /// Soft detent while a slider is dragged: the click sound, quieter, at most every 35 ms.
+    static func tick() {
+        let now = CACurrentMediaTime(), look = Prefs.shared.appearance
+        guard now - lastTick > 0.035, now - lastClick > 0.08 else { return }
+        lastTick = now
+        play(look.clickSound, volume: look.soundVolume * 0.45)
+    }
+
+    // MARK: App-wide feedback
+
+    private static var monitor: Any?
+
+    /// Every interaction in Learn's windows clicks: pressing any native control (switch, segmented tabs, checkbox,
+    /// slider grab, color well, stepper), opening any menu (pickers, pop-ups, context menus) and choosing from it.
+    /// Custom glass buttons already click themselves; the de-dupe in `play` keeps it to one sound.
+    static func installFeedback() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown]) { event in
+            if let root = event.window?.contentView, let hit = root.hitTest(event.locationInWindow),
+               isControl(hit) {
+                play(.click)
+            }
+            return event
+        }
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main) { _ in play(.click) }
+        nc.addObserver(forName: NSMenu.didSendActionNotification, object: nil, queue: .main) { _ in play(.click) }
+    }
+
+    /// A native control, or a view inside one. Pop-up buttons are left to the menu they open.
+    private static func isControl(_ v: NSView) -> Bool {
+        var view: NSView? = v
+        while let c = view {
+            if c is NSPopUpButton { return false }
+            if c is NSControl || c is NSSwitch { return (c as? NSControl)?.isEnabled ?? true }
+            view = c.superview
+        }
+        return false
     }
 
     static func play(_ effect: SoundEffect, volume: Double) {
@@ -125,3 +173,4 @@ enum Sounds {
         return d
     }
 }
+

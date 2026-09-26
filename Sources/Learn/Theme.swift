@@ -44,6 +44,12 @@ extension View {
         }
     }
 
+    /// Soft detent clicks while `value` is dragged across `range` (every 1/20th of it).
+    func sliderTicks(_ value: Double, in range: ClosedRange<Double>) -> some View {
+        let span = max(range.upperBound - range.lowerBound, .ulpOfOne)
+        return onChange(of: Int(((value - range.lowerBound) / span * 20).rounded())) { Sounds.tick() }
+    }
+
     /// Glass surface lights up where the pointer is: a soft glow inside and a brighter rim near the cursor.
     func pointerLight<S: InsettableShape>(_ shape: S, strength: Double = 1, radius: CGFloat = 140) -> some View {
         modifier(PointerLight(shape: shape, strength: strength, radius: radius))

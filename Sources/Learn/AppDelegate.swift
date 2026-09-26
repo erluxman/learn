@@ -20,6 +20,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var lastApp: NSRunningApplication?   // last app the user focused (not Learn)
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        Sounds.installFeedback()
         let opts = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
         _ = AXIsProcessTrustedWithOptions(opts)
 

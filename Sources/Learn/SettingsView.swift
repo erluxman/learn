@@ -532,7 +532,7 @@ private struct AppearancePane: View {
                         format: @escaping (Double) -> String = { "\(Int(($0 * 100).rounded()))%" }) -> some View {
         HStack(spacing: 8) {
             Text(label).font(.app(11.5)).foregroundStyle(.secondary)
-            Slider(value: value, in: range).frame(width: 150)
+            Slider(value: value, in: range).sliderTicks(value.wrappedValue, in: range).frame(width: 150)
             Text(format(value.wrappedValue)).font(.app(11.5)).monospacedDigit().foregroundStyle(.secondary).frame(width: 38, alignment: .trailing)
         }
     }
@@ -541,7 +541,7 @@ private struct AppearancePane: View {
                         _ range: ClosedRange<Double>, percent: Bool = false, format: String = "%.0f") -> some View {
         SettingRow(title: title, detail: detail, symbol: symbol, color: color) {
             HStack(spacing: 10) {
-                Slider(value: value, in: range).frame(width: 180)
+                Slider(value: value, in: range).sliderTicks(value.wrappedValue, in: range).frame(width: 180)
                 Text(percent ? "\(Int((value.wrappedValue * 100).rounded()))%" : String(format: format, value.wrappedValue))
                     .monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
             }
@@ -571,6 +571,7 @@ private struct SoundsPane: View {
                     HStack(spacing: 10) {
                         Slider(value: SwiftUI.Binding(get: { prefs.appearance.soundVolume }, set: { prefs.appearance.soundVolumeChoice = $0 }),
                                in: 0...1) { editing in if !editing { Sounds.play(.click) } }
+                            .sliderTicks(prefs.appearance.soundVolume, in: 0...1)
                             .frame(width: 180)
                         Text("\(Int((prefs.appearance.soundVolume * 100).rounded()))%")
                             .monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
