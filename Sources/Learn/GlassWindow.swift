@@ -38,45 +38,120 @@ final class GlassWindow: NSWindow {
     override func performMiniaturize(_ sender: Any?) { miniaturize(sender) }
 }
 
-/// Window drags turn into a lag the glass trails by, then springs back from with a wobble — like jelly.
-final class JellyMotion: ObservableObject {
+/// Solid while you drag — the glass moves exactly with the window. When you let go it's dropped: it carries on a little
+/// with the drag's momentum, dips, and springs back with a couple of soft wobbles, simulated every display frame.
+/// Settings ▸ Appearance ▸ Jelly wobble loosens the spring (more give, more bounce); 0 turns it off.
+final class JellyMotion: NSObject, ObservableObject {
     static let margin: CGFloat = 36
-    static let maxLag: CGFloat = 6
+    static let maxLag: CGFloat = 14
 
-    @Published var lag = CGSize.zero
-    var paused = false   // resizing moves the origin too; that isn't a drag
-    private var last: NSPoint?
+    @Published private(set) var lag = CGSize.zero
+    var paused = false { didSet { if paused { settle() } } }   // resizing moves the origin too; that isn't a drag
+    static var mouseHeld: () -> Bool = { NSEvent.pressedMouseButtons & 1 != 0 }   // swappable for tests
+
+    private weak var window: NSWindow?
     private var observer: Any?
+    private var link: CADisplayLink?
+    private var anchor = CGPoint.zero     // where the window is (SwiftUI orientation: y down)
+    private var glass = CGPoint.zero      // where the glass is; the spring pulls it to `anchor`
+    private var velocity = CGVector.zero  // the glass's, once released
+    private var dragVelocity = CGVector.zero   // the window's while held, smoothed
+    private var lastMove: CFTimeInterval = 0
+    private var dragging = false
+    private var lastStep: CFTimeInterval = 0
 
     func attach(_ w: NSWindow) {
-        last = w.frame.origin
-        observer = NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: w, queue: .main) { [weak self, weak w] _ in
-            guard let self, let w else { return }
-            let o = w.frame.origin
-            defer { self.last = o }
-            let wobble = Prefs.shared.appearance.wobble
-            guard let l = self.last, wobble > 0, !self.paused, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return }
-            let d = CGSize(width: o.x - l.x, height: -(o.y - l.y))   // SwiftUI's y points down
-            guard abs(d.width) < 160, abs(d.height) < 160 else { return }   // jumps (re-centering, new screen) aren't drags
-            let m = Self.maxLag * min(wobble, 1.5), k = 0.22 * wobble
-            let next = CGSize(width: min(max(self.lag.width - d.width * k, -m), m),
-                              height: min(max(self.lag.height - d.height * k, -m), m))
-            var t = Transaction(); t.disablesAnimations = true
-            withTransaction(t) { self.lag = next }
-            DispatchQueue.main.async {
-                withAnimation(.spring(response: 0.38, dampingFraction: 0.55)) { self.lag = .zero }
-            }
+        window = w
+        anchor = Self.position(w); glass = anchor
+        observer = NotificationCenter.default.addObserver(forName: NSWindow.didMoveNotification, object: w, queue: .main) { [weak self] _ in
+            self?.windowMoved()
         }
     }
 
-    deinit { observer.map(NotificationCenter.default.removeObserver) }
+    private static func position(_ w: NSWindow) -> CGPoint { CGPoint(x: w.frame.minX, y: -w.frame.minY) }
+
+    private func windowMoved() {
+        guard let w = window else { return }
+        let p = Self.position(w), now = CACurrentMediaTime()
+        let d = CGVector(dx: p.x - anchor.x, dy: p.y - anchor.y)
+        let jump = hypot(d.dx, d.dy) > 240   // re-centering / another screen: not a drag
+        anchor = p
+        let wobble = Prefs.shared.appearance.wobble
+        guard !jump, !paused, wobble > 0, Self.mouseHeld(),
+              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return settle() }
+        // Held: rigid. Track how fast the window goes so the drop can carry that momentum.
+        let dt = max(now - lastMove, 1.0 / 240)
+        if dt < 0.1 {
+            let k = 0.35
+            dragVelocity = CGVector(dx: dragVelocity.dx * (1 - k) + d.dx / dt * k, dy: dragVelocity.dy * (1 - k) + d.dy / dt * k)
+        } else { dragVelocity = .zero }
+        lastMove = now
+        dragging = true
+        glass = anchor; velocity = .zero
+        if lag != .zero { lag = .zero }
+        startLink()
+    }
+
+    private func startLink() {
+        guard link == nil, let w = window else { return }
+        lastStep = 0
+        let l = w.displayLink(target: self, selector: #selector(step(_:)))
+        l.add(to: .main, forMode: .common)
+        link = l
+    }
+
+    @objc private func step(_ l: CADisplayLink) {
+        let now = l.timestamp
+        let dt = lastStep == 0 ? 1.0 / 120 : min(now - lastStep, 1.0 / 30)
+        lastStep = now
+        if dragging {
+            guard !Self.mouseHeld() else {   // still held: stay solid; a pause kills the momentum
+                if CACurrentMediaTime() - lastMove > 0.08 { dragVelocity = .zero }
+                return
+            }
+            drop()
+        }
+        let wobble = min(max(Prefs.shared.appearance.wobble, 0.1), 2)
+        let stiffness = 320 / wobble
+        let damping = 2 * max(0.5 - 0.18 * wobble, 0.16) * stiffness.squareRoot()
+        for _ in 0..<2 {   // two half-steps keep the spring stable at any frame rate
+            let h = dt / 2
+            let ax = stiffness * (anchor.x - glass.x) - damping * velocity.dx
+            let ay = stiffness * (anchor.y - glass.y) - damping * velocity.dy
+            velocity.dx += ax * h; velocity.dy += ay * h
+            glass.x += velocity.dx * h; glass.y += velocity.dy * h
+        }
+        let raw = CGSize(width: glass.x - anchor.x, height: glass.y - anchor.y)
+        let m = Self.maxLag * min(wobble, 1.5)
+        lag = CGSize(width: m * tanh(raw.width / m), height: m * tanh(raw.height / m))   // soft limit, no hard stop
+        if abs(raw.width) < 0.05, abs(raw.height) < 0.05, hypot(velocity.dx, velocity.dy) < 1 { settle() }
+    }
+
+    /// Let go: the glass keeps some of the drag's momentum and dips as if set down, then the spring takes over.
+    private func drop() {
+        dragging = false
+        let wobble = min(max(Prefs.shared.appearance.wobble, 0.1), 2)
+        let carry = 0.35 * wobble, cap = 900.0
+        velocity = CGVector(dx: max(min(dragVelocity.dx * carry, cap), -cap),
+                            dy: max(min(dragVelocity.dy * carry, cap), -cap) + 160 * wobble)
+        dragVelocity = .zero
+    }
+
+    private func settle() {
+        link?.invalidate(); link = nil
+        dragging = false
+        glass = anchor; velocity = .zero; dragVelocity = .zero
+        if lag != .zero { lag = .zero }
+    }
+
+    deinit { observer.map(NotificationCenter.default.removeObserver); link?.invalidate() }
 }
 
 /// Trails the window by `lag` and stretches along the motion, squashing across it.
 struct Jelly: ViewModifier {
     @ObservedObject var motion: JellyMotion
     func body(content: Content) -> some View {
-        let l = motion.lag, k: CGFloat = 1 / 420
+        let l = motion.lag, k: CGFloat = 1 / 520
         content
             .scaleEffect(x: 1 + abs(l.width) * k - abs(l.height) * k / 2,
                          y: 1 + abs(l.height) * k - abs(l.width) * k / 2)

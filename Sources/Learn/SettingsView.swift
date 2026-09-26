@@ -8,12 +8,13 @@ final class SettingsWindow {
     var isFront: Bool { window?.isKeyWindow == true && NSApp.isActive }
 
     enum Tab: String, Hashable, CaseIterable, Identifiable {
-        case permissions, appearance, hotkeys, panel, display, search, advanced, shortcuts
+        case permissions, appearance, sounds, hotkeys, panel, display, search, advanced, shortcuts
         var id: Self { self }
         var title: String {
             switch self {
             case .permissions: "Permissions"
             case .appearance: "Appearance"
+            case .sounds: "Sounds"
             case .hotkeys: "Hotkeys"
             case .panel: "Learn Panel"
             case .display: "On Screen"
@@ -26,6 +27,7 @@ final class SettingsWindow {
             switch self {
             case .permissions: "What Learn needs to read and run shortcuts. Changes apply instantly."
             case .appearance: "The glass Learn is made of — how clear, frosted, colored and lively it is."
+            case .sounds: "A little feedback when you click in Learn and when it runs a shortcut for you."
             case .hotkeys: "Global keys that work in every app."
             case .panel: "Keys that work while Learn's panel is open."
             case .display: "The shortcut bubble, pointer mode and mouse chords."
@@ -38,6 +40,7 @@ final class SettingsWindow {
             switch self {
             case .permissions: "lock.shield.fill"
             case .appearance: "paintbrush.pointed.fill"
+            case .sounds: "speaker.wave.2.fill"
             case .hotkeys: "command"
             case .panel: "rectangle.and.text.magnifyingglass"
             case .display: "sparkles.rectangle.stack.fill"
@@ -50,6 +53,7 @@ final class SettingsWindow {
             switch self {
             case .permissions: .blue
             case .appearance: .cyan
+            case .sounds: .red
             case .hotkeys: .purple
             case .panel: .indigo
             case .display: .pink
@@ -122,6 +126,7 @@ struct SettingsView: View {
                 switch selection.tab {
                 case .permissions: PermissionsPane()
                 case .appearance: AppearancePane()
+                case .sounds: SoundsPane()
                 case .hotkeys: HotkeysPane()
                 case .panel: PanelPane()
                 case .display: DisplayPane()
@@ -226,23 +231,23 @@ struct SettingRow<Control: View>: View {
     @State private var hover = false
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous)
-        LabeledContent {
-            control
-        } label: {
-            HStack(spacing: 12) {
-                if let symbol { IconTile(symbol: symbol, color: color, size: 32).scaleEffect(hover ? 1.06 : 1) }
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title).font(.app(13.5, .medium))
-                    if let detail {
-                        Text(detail).font(.app(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    }
+        // Icon, text and control all centred on one line, so a slider sits level with its title block, not its first baseline.
+        HStack(alignment: .center, spacing: 12) {
+            if let symbol { IconTile(symbol: symbol, color: color, size: 32).scaleEffect(hover ? 1.06 : 1) }
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).font(.app(13.5, .medium))
+                if let detail {
+                    Text(detail).font(.app(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            control.fixedSize()   // keeps its own width; the text wraps instead
         }
-        .padding(.vertical, 5).padding(.horizontal, 8)
-        .background(shape.fill(Theme.highlight.opacity(hover ? 0.5 : 0)))
+        .padding(.vertical, 6).padding(.horizontal, 10)
+        // A flat wash of the row's own color, not a second pane of glass on the card's glass.
+        .background(shape.fill(color.opacity(hover ? 0.14 : 0)))
         .pointerLight(shape, strength: 0.6, radius: 180)
-        .padding(.horizontal, -8)   // the highlight reaches the card's edge
+        .padding(.horizontal, -4)   // highlight inset from the card's sides about as much as from its top and bottom
         .onHover { h in withAnimation(Theme.bouncy) { hover = h } }
     }
 }
@@ -262,7 +267,8 @@ private struct ToggleRow: View {
     @SwiftUI.Binding var isOn: Bool
     var body: some View {
         SettingRow(title: title, detail: detail, symbol: symbol, color: color) {
-            Toggle("", isOn: $isOn).toggleStyle(.switch).labelsHidden()
+            Toggle("", isOn: SwiftUI.Binding(get: { isOn }, set: { isOn = $0; Sounds.play(.click) }))
+                .toggleStyle(.switch).labelsHidden()
         }
     }
 }
@@ -387,23 +393,84 @@ private struct AppearancePane: View {
 
     var body: some View {
         Pane(tab: .appearance) {
-            Section("Glass") {
-                SettingRow(title: "Blur", detail: "Clear shows more of what's behind; regular is frostier and easier to read.",
-                           symbol: "circle.lefthalf.filled", color: .cyan) {
-                    Picker("", selection: look.material) {
-                        Text("Clear").tag(Appearance.Material.clear)
-                        Text("Regular").tag(Appearance.Material.regular)
+            Section {
+                ThemeDesigner()
+            } header: {
+                Text("Theme")
+            } footer: {
+                Text("Drag the dots to pick colors — the big one turns the others with it. Double-click the wheel to add a color.")
+                    .font(.app(11.5)).foregroundStyle(.secondary)
+            }
+            Section {
+                SettingRow(title: "Blur", detail: prefs.appearance.blur.isTunable
+                           ? "A true Gaussian blur of what's behind. Radius sets how soft; saturation how vivid the colors come through."
+                           : "What's behind every surface. macOS fixes this blur's strength, so the slider fades it in or out.",
+                           symbol: "drop.halffull", color: .cyan) {
+                    VStack(alignment: .trailing, spacing: 8) {
+                        Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.blur }, set: { style in
+                            prefs.appearance.blurStyleChoice = style
+                            prefs.appearance.blurRadiusChoice = nil          // each tunable blur starts at its preset
+                            prefs.appearance.blurSaturationChoice = nil
+                        })) {
+                            Section("Liquid Glass") { ForEach(BlurStyle.liquid) { Text($0.title).tag($0) } }
+                            Section("Adjustable blur") { ForEach(BlurStyle.tunable) { Text($0.title).tag($0) } }
+                            Section("Materials") { ForEach(BlurStyle.materials) { Text($0.title).tag($0) } }
+                            Section("Behind window") { ForEach(BlurStyle.appKit) { Text($0.title).tag($0) } }
+                            Divider()
+                            Text(BlurStyle.none.title).tag(BlurStyle.none)
+                        }
+                        .labelsHidden().frame(width: 230)
+                        if prefs.appearance.blur.isTunable {
+                            amount(SwiftUI.Binding(get: { prefs.appearance.blurRadius }, set: { prefs.appearance.blurRadiusChoice = $0 }),
+                                   range: 0...BlurStyle.maxRadius, label: "Radius", format: { String(format: "%.1f pt", $0) })
+                            amount(SwiftUI.Binding(get: { prefs.appearance.blurSaturation }, set: { prefs.appearance.blurSaturationChoice = $0 }),
+                                   range: 0...2.5, label: "Saturation", format: { String(format: "%.1f×", $0) })
+                        } else {
+                            amount(SwiftUI.Binding(get: { prefs.appearance.blurAmount }, set: { prefs.appearance.blurAmountChoice = $0 }),
+                                   label: "Opacity")
+                                .disabled(prefs.appearance.blur == .none)
+                        }
                     }
-                    .pickerStyle(.segmented).labelsHidden().fixedSize()
                 }
-                slider("Darkness", "Smoke the glass itself — no layer underneath.", "moon.fill", .indigo, look.darkness, 0...1, percent: true)
-                SettingRow(title: "Tint", detail: "Color the glass everywhere in Learn.", symbol: "paintpalette.fill", color: .pink) {
-                    ColorPicker("", selection: SwiftUI.Binding(get: { prefs.appearance.tintColor },
-                                                               set: { prefs.appearance.tint = HUDStyle.RGBA(NSColor($0)) }),
-                                supportsOpacity: false)
-                        .labelsHidden()
+                SettingRow(title: "Grain", detail: "A texture on the glass, from fine film to glitter. Natural blends grey grain in; Custom colors it.",
+                           symbol: "circle.dotted", color: .brown) {
+                    VStack(alignment: .trailing, spacing: 8) {
+                        Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.grainStyle }, set: { style in
+                            prefs.appearance.grainStyleChoice = style
+                            if style != .none, prefs.appearance.grain == 0 { prefs.appearance.grainChoice = 0.5 }
+                        })) {
+                            Text(GrainStyle.none.title).tag(GrainStyle.none)
+                            Section("Noise") { ForEach(GrainStyle.noises) { Text($0.title).tag($0) } }
+                            Section("Patterns") { ForEach(GrainStyle.patterns) { Text($0.title).tag($0) } }
+                        }
+                        .labelsHidden().frame(width: 230)
+                        HStack(spacing: 8) {
+                            Text("Color").font(.app(11.5)).foregroundStyle(.secondary)
+                            Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.grainColor == nil }, set: { natural in
+                                prefs.appearance.grainColor = natural ? nil : prefs.appearance.grainColor ?? prefs.appearance.themeColors[0]
+                            })) {
+                                Text("Natural").tag(true)
+                                Text("Custom").tag(false)
+                            }
+                            .pickerStyle(.segmented).labelsHidden().frame(width: 140)
+                            ColorPicker("", selection: SwiftUI.Binding(
+                                get: { Color(nsColor: (prefs.appearance.grainColor ?? prefs.appearance.themeColors[0]).ns) },
+                                set: { prefs.appearance.grainColor = HUDStyle.RGBA(NSColor($0)) }), supportsOpacity: false)
+                                .labelsHidden().frame(width: 38)
+                                .opacity(prefs.appearance.grainColor == nil ? 0.35 : 1)
+                        }
+                        .disabled(prefs.appearance.grainStyle == .none)
+                        amount(SwiftUI.Binding(get: { prefs.appearance.grain }, set: { prefs.appearance.grainChoice = $0 }))
+                            .disabled(prefs.appearance.grainStyle == .none)
+                        amount(SwiftUI.Binding(get: { prefs.appearance.grainScale }, set: { prefs.appearance.grainScaleChoice = $0 }),
+                               range: 0.5...3, label: "Size", format: { String(format: "%.1f×", $0) })
+                            .disabled(prefs.appearance.grainStyle == .none)
+                    }
                 }
-                slider("Tint strength", "0 keeps the glass neutral.", "drop.fill", .purple, look.tintStrength, 0...1, percent: true)
+            } header: {
+                Text("Glass & texture")
+            } footer: {
+                Text("Mix any blur with any grain — the window around you is the preview.").font(.app(11.5)).foregroundStyle(.secondary)
             }
             Section("Type") {
                 SettingRow(title: "App font", detail: "Used for all of Learn's text. The on-screen bubble has its own font in On Screen.",
@@ -425,14 +492,16 @@ private struct AppearancePane: View {
                     .padding(.vertical, 4)
             }
             Section("Icons") {
-                SettingRow(title: "Icon style", detail: "Apple's SF Symbols, drawn quiet, neutral or in full color.",
+                SettingRow(title: "Icon style", detail: "Apple's SF Symbols: tinted, mono, glossy color, glass, outline, gradient, soft or plain.",
                            symbol: "square.grid.2x2.fill", color: .blue) {
                     Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.iconStyle }, set: { prefs.appearance.iconStyleChoice = $0 })) {
-                        Text("Tinted").tag(Appearance.IconStyle.tinted)
-                        Text("Mono").tag(Appearance.IconStyle.mono)
-                        Text("Color").tag(Appearance.IconStyle.color)
+                        ForEach(Appearance.IconStyle.allCases) { style in
+                            Label { Text(style.title) } icon: { IconTile(symbol: "star.fill", color: .orange, size: 16).environment(\.appearance, {
+                                var a = prefs.appearance; a.iconStyleChoice = style; return a }()) }
+                                .tag(style)
+                        }
                     }
-                    .pickerStyle(.segmented).labelsHidden().fixedSize()
+                    .labelsHidden().frame(width: 170)
                 }
             }
             Section("Shape") {
@@ -458,6 +527,16 @@ private struct AppearancePane: View {
         }
     }
 
+    /// Compact labeled slider for a control's second line.
+    private func amount(_ value: SwiftUI.Binding<Double>, range: ClosedRange<Double> = 0...1, label: String = "Amount",
+                        format: @escaping (Double) -> String = { "\(Int(($0 * 100).rounded()))%" }) -> some View {
+        HStack(spacing: 8) {
+            Text(label).font(.app(11.5)).foregroundStyle(.secondary)
+            Slider(value: value, in: range).frame(width: 150)
+            Text(format(value.wrappedValue)).font(.app(11.5)).monospacedDigit().foregroundStyle(.secondary).frame(width: 38, alignment: .trailing)
+        }
+    }
+
     private func slider(_ title: String, _ detail: String?, _ symbol: String, _ color: Color, _ value: SwiftUI.Binding<Double>,
                         _ range: ClosedRange<Double>, percent: Bool = false, format: String = "%.0f") -> some View {
         SettingRow(title: title, detail: detail, symbol: symbol, color: color) {
@@ -468,6 +547,61 @@ private struct AppearancePane: View {
             }
         }
     }
+}
+
+// MARK: Sounds
+
+private struct SoundsPane: View {
+    @ObservedObject private var prefs = Prefs.shared
+
+    var body: some View {
+        Pane(tab: .sounds) {
+            Section {
+                SettingRow(title: "Clicks", detail: "Buttons, rows, switches and the sidebar in Learn.",
+                           symbol: "cursorarrow.click", color: .blue) {
+                    SoundPicker(selection: SwiftUI.Binding(get: { prefs.appearance.clickSound },
+                                                           set: { prefs.appearance.clickSoundChoice = $0 }))
+                }
+                SettingRow(title: "Shortcut runs", detail: "When Learn runs a shortcut, command or on-screen item for you.",
+                           symbol: "bolt.fill", color: .orange) {
+                    SoundPicker(selection: SwiftUI.Binding(get: { prefs.appearance.shortcutSound },
+                                                           set: { prefs.appearance.shortcutSoundChoice = $0 }))
+                }
+                SettingRow(title: "Volume", symbol: "speaker.wave.3.fill", color: .red) {
+                    HStack(spacing: 10) {
+                        Slider(value: SwiftUI.Binding(get: { prefs.appearance.soundVolume }, set: { prefs.appearance.soundVolumeChoice = $0 }),
+                               in: 0...1) { editing in if !editing { Sounds.play(.click) } }
+                            .frame(width: 180)
+                        Text("\(Int((prefs.appearance.soundVolume * 100).rounded()))%")
+                            .monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Sound menu (Learn's own, then macOS's) with a play button; choosing one plays it.
+private struct SoundPicker: View {
+    @SwiftUI.Binding var selection: SoundEffect
+    var body: some View {
+        HStack(spacing: 8) {
+            Picker("", selection: SwiftUI.Binding(get: { selection }, set: { selection = $0; preview() })) {
+                Text("None").tag(SoundEffect.none)
+                Section("Learn") { ForEach(SoundEffect.learn) { Text($0.title).tag($0) } }
+                Section("macOS") { ForEach(SoundEffect.system) { Text($0.title).tag($0) } }
+            }
+            .labelsHidden().frame(width: 150)
+            Button(action: preview) {
+                Image(systemName: "play.fill").font(.system(size: 10, weight: .bold)).frame(width: 26, height: 26)
+            }
+            .buttonStyle(LiquidButtonStyle(shape: Circle(), sound: false))
+            .foregroundStyle(.secondary)
+            .disabled(selection == .none)
+            .help("Play")
+        }
+    }
+    private func preview() { Sounds.play(selection, volume: Prefs.shared.appearance.soundVolume) }
 }
 
 // MARK: Hotkeys
@@ -566,10 +700,13 @@ private struct PanelPane: View {
                 }
             }
             Section("Built in") {
-                ForEach([("↩", "Run the selected item / open the selected app"), ("↑", "Move the selection up"), ("↓", "Move the selection down"),
-                         ("⎋", "Back to the app list, then close (or ⌫ on empty search)"), ("⌘R", "Re-read this app's shortcuts"),
+                ForEach([("↩", "Run the selected item / open the selected app"), ("⇥", "Nothing typed: switch between frequently used and suggested shortcuts"), ("↑", "Move the selection up"), ("↓", "Move the selection down"),
+                         ("⎋", "Back to the app list, then close (or ⌫ on empty search)"), ("⌘R", "Full rescan of this app (it also refreshes quietly each time you open it)"),
                          ("⌘,", "Open these settings"), ("⌘W", "Close Learn")], id: \.1) { key, what in
-                    LabeledContent(what) { Keycaps(display: key, size: 11.5) }
+                    HStack(alignment: .center) {
+                        Text(what).frame(maxWidth: .infinity, alignment: .leading)
+                        Keycaps(display: key, size: 11.5)
+                    }
                 }
             }
         }

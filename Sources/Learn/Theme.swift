@@ -30,9 +30,13 @@ extension View {
         if #available(macOS 26, *), let id, let ns { glassEffectID(id, in: ns) } else { self }
     }
 
-    /// `.glass` button on macOS 26, bordered before.
-    @ViewBuilder
+    /// `.glass` button on macOS 26, bordered before; clicks play the click sound.
     func glassButton(prominent: Bool = false) -> some View {
+        styledGlassButton(prominent: prominent).simultaneousGesture(TapGesture().onEnded { Sounds.play(.click) })
+    }
+
+    @ViewBuilder
+    private func styledGlassButton(prominent: Bool) -> some View {
         if #available(macOS 26, *) {
             if prominent { buttonStyle(.glassProminent) } else { buttonStyle(.glass) }
         } else {
@@ -52,14 +56,59 @@ private struct GlassSurface<S: Shape>: ViewModifier {
     let interactive: Bool
     @Environment(\.appearance) private var look
 
-    /// Nothing is layered under the glass: its color and darkness are the glass's own tint.
+    /// The blur chosen in Settings ▸ Appearance (Liquid Glass tinted with the theme, a material, or none), faded by its
+    /// amount; on it, under the content, the theme's gradient sheen and the chosen grain.
     func body(content: Content) -> some View {
         let tint = tint ?? look.glassTint
+        let sheen = self.tint == nil ? look.sheen : nil
+        let blur = look.blur
+        let content = content.background {
+            if let sheen { shape.fill(LinearGradient(colors: sheen, startPoint: .topLeading, endPoint: .bottomTrailing)) }
+            if look.grain > 0, let tile = look.grainStyle.tile(scale: look.grainScale, color: look.grainColor) {
+                Image(nsImage: tile).resizable(resizingMode: .tile)
+                    .opacity(look.grain * look.grainStyle.strength).blendMode(look.grainStyle.blend(colored: look.grainColor != nil))
+                    .clipShape(shape).allowsHitTesting(false)
+            }
+        }
         if #available(macOS 26, *) {
-            content.glassEffect((look.material == .clear ? Glass.clear : Glass.regular).tint(tint).interactive(interactive), in: shape)
+            // One view tree for every setting: switching trees (glass on the content at 100%, faded glass behind it below)
+            // made SwiftUI rebuild the whole surface, so the UI jumped the moment the slider touched 100%.
+            // At 100% Liquid Glass sits on the content (interactive, morphing); otherwise it's `.identity`, a no-op.
+            let full = blur.isLiquid && look.blurAmount > 0.99
+            content
+                .background { if !full { backdrop(blur, tint: tint).allowsHitTesting(false) } }
+                .overlay(shape.stroke(.white.opacity(full ? 0 : blur == .none ? 0.1 : 0.14), lineWidth: 0.75).allowsHitTesting(false))
+                .glassEffect(full ? (blur == .liquidClear ? Glass.clear : Glass.regular).tint(tint).interactive(interactive) : .identity, in: shape)
         } else {
-            content.background(look.material == .clear ? Material.ultraThin : Material.regular, in: shape)
-                .overlay(shape.stroke(.white.opacity(0.14), lineWidth: 1))
+            content.background { backdrop(blur, tint: tint).allowsHitTesting(false) }
+                .overlay(shape.stroke(.white.opacity(blur == .none ? 0.1 : 0.14), lineWidth: 0.75).allowsHitTesting(false))
+        }
+    }
+
+    @ViewBuilder
+    private func backdrop(_ blur: BlurStyle, tint: Color?) -> some View {
+        ZStack {
+            Group {
+                if blur.isLiquid {
+                    if #available(macOS 26, *) {
+                        Color.clear.glassEffect((blur == .liquidClear ? Glass.clear : Glass.regular).tint(tint), in: shape)
+                    } else { shape.fill(.regularMaterial) }
+                } else if blur.isTunable {
+                    GeometryReader { g in
+                        BackdropBlur(params: .init(radius: look.blurRadius, saturation: look.blurSaturation, brightness: blur.brightness,
+                                                   progressive: blur == .progressive,
+                                                   corner: (shape as? RoundedRectangle)?.cornerSize.width ?? min(g.size.width, g.size.height) / 2))
+                    }
+                } else if let m = blur.swiftUIMaterial {
+                    shape.fill(m)
+                } else if let m = blur.appKitMaterial {
+                    GeometryReader { g in
+                        BehindWindowBlur(material: m, radius: (shape as? RoundedRectangle)?.cornerSize.width ?? min(g.size.width, g.size.height) / 2)
+                    }
+                }
+            }
+            .opacity(blur.isTunable ? 1 : look.blurAmount)
+            if !blur.isLiquid, let tint { shape.fill(tint) }   // only glass can carry a tint itself; elsewhere it's the color on top
         }
     }
 }
@@ -129,9 +178,10 @@ struct LiquidButtonStyle<S: InsettableShape>: ButtonStyle {
     var tint: Color? = nil
     var glassID: String? = nil
     var namespace: Namespace.ID? = nil
+    var sound = true   // off for buttons that play a sound of their own
     func makeBody(configuration: Configuration) -> some View {
         LiquidButton(label: configuration.label, pressed: configuration.isPressed, shape: shape, tint: tint,
-                     glassID: glassID, namespace: namespace)
+                     glassID: glassID, namespace: namespace, sound: sound)
     }
 }
 
@@ -142,6 +192,7 @@ private struct LiquidButton<Label: View, S: InsettableShape>: View {
     let tint: Color?
     let glassID: String?
     let namespace: Namespace.ID?
+    let sound: Bool
     @State private var point: CGPoint?
     @State private var size = CGSize.zero
     @Environment(\.isEnabled) private var enabled
@@ -170,6 +221,7 @@ private struct LiquidButton<Label: View, S: InsettableShape>: View {
             .opacity(enabled ? 1 : 0.45)
             .animation(pressed ? Theme.press : Theme.release, value: pressed)
             .animation(Theme.bouncy, value: hovering)
+            .onChange(of: pressed) { _, down in if down && sound { Sounds.play(.click) } }
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let p): point = p
@@ -181,10 +233,12 @@ private struct LiquidButton<Label: View, S: InsettableShape>: View {
 
 /// List rows: a small, quick press-in.
 struct RowPressStyle: ButtonStyle {
+    var sound = true   // off where the press runs a shortcut: that plays the shortcut sound instead
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .scaleEffect(configuration.isPressed ? 0.975 : 1)
             .animation(configuration.isPressed ? Theme.press : Theme.release, value: configuration.isPressed)
+            .onChange(of: configuration.isPressed) { _, down in if down && sound { Sounds.play(.click) } }
     }
 }
 
@@ -312,7 +366,42 @@ struct IconTile: View {
                     .font(.system(size: size * 0.5, weight: .medium)).foregroundStyle(.primary))
         case .color:
             glossy(shape)
+        case .glass:
+            Color.clear.frame(width: size, height: size)
+                .liquidGlass(in: shape)
+                .overlay(symbolImage.foregroundStyle(color))
+        case .outline:
+            shape.strokeBorder(color.opacity(0.85), lineWidth: max(1, size / 22))
+                .frame(width: size, height: size)
+                .overlay(symbolImage.foregroundStyle(color))
+        case .gradient:
+            shape.fill(LinearGradient(colors: [Self.shift(color, hue: -0.06, brightness: 0.12), Self.shift(color, hue: 0.07, brightness: -0.08)],
+                                      startPoint: .topLeading, endPoint: .bottomTrailing))
+                .frame(width: size, height: size)
+                .overlay(symbolImage.foregroundStyle(.white))
+                .shadow(color: color.opacity(0.3), radius: size * 0.1, y: size * 0.04)
+        case .soft:
+            shape.fill(Color.primary.opacity(0.06))
+                .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.35), .black.opacity(0.25)],
+                                                           startPoint: .top, endPoint: .bottom), lineWidth: 1))
+                .shadow(color: .black.opacity(0.25), radius: size * 0.08, y: size * 0.06)
+                .frame(width: size, height: size)
+                .overlay(symbolImage.foregroundStyle(color))
+        case .plain:
+            symbolImage.font(.system(size: size * 0.62, weight: .semibold)).foregroundStyle(color)
+                .frame(width: size, height: size)
         }
+    }
+
+    private var symbolImage: some View {
+        Image(systemName: symbol).symbolRenderingMode(.hierarchical).font(.system(size: size * 0.5, weight: .semibold))
+    }
+
+    /// `color` with its hue and brightness nudged (for two-tone gradients).
+    private static func shift(_ color: Color, hue dh: CGFloat, brightness db: CGFloat) -> Color {
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        (NSColor(color).usingColorSpace(.sRGB) ?? .gray).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        return Color(hue: (h + dh + 1).truncatingRemainder(dividingBy: 1), saturation: s, brightness: min(max(b + db, 0), 1))
     }
 
     private func glossy(_ shape: RoundedRectangle) -> some View {

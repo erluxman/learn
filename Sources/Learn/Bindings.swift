@@ -144,6 +144,7 @@ final class KeyTap {
         let mine = id == Bundle.main.bundleIdentifier   // Learn's panel: only global commands apply
         guard let b = Bindings.shared.match(mine ? "" : id, keyCode: code, mods: mods) else { return pass }
         if !isRepeat {
+            DispatchQueue.main.async { Sounds.play(.shortcut) }
             let pid = app.processIdentifier
             switch b.path.first {
             case LearnActions.group: DispatchQueue.main.async { LearnActions.run(b.path) }

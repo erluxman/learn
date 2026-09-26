@@ -40,8 +40,7 @@ struct HUDStyleSections: View {
                 Text("Blurred").tag(HUDStyle.Backdrop.frosted)
             }
             .pickerStyle(.segmented)
-            ColorPicker(prefs.hudStyle.box == .tinted ? "Glass color" : "Color", selection: color(\.background), supportsOpacity: true)
-                .disabled(prefs.hudStyle.box == .glass)
+            boxControls
             slider("Rounded corners", style.cornerRadius, 0...40, "%.0f pt")
             slider("Padding left/right", style.paddingH, 0...80, "%.0f pt")
             slider("Padding top/bottom", style.paddingV, 0...60, "%.0f pt")
@@ -50,6 +49,7 @@ struct HUDStyleSections: View {
         Section("Timing & animation") {
             slider("Stays on screen", style.duration, 0.3...6, "%.1f s")
             Picker("Appear / disappear", selection: style.motion) {
+                Text("Jelly").tag(HUDStyle.Motion.jelly)
                 Text("Fade").tag(HUDStyle.Motion.fade)
                 Text("Slide").tag(HUDStyle.Motion.slide)
                 Text("Pop").tag(HUDStyle.Motion.pop)
@@ -64,6 +64,53 @@ struct HUDStyleSections: View {
                     .disabled(prefs.hudStyle == HUDStyle())
             }
         }
+    }
+
+    // MARK: Per-backdrop settings
+
+    /// The current backdrop's own controls; they edit only that backdrop's saved look.
+    @ViewBuilder
+    private var boxControls: some View {
+        let b = prefs.hudStyle.box
+        let look = SwiftUI.Binding(get: { prefs.hudStyle.look(b) }, set: { prefs.hudStyle.setLook($0, for: b) })
+        switch b {
+        case .solid:
+            ColorPicker("Color", selection: lookColor(look), supportsOpacity: false)
+            slider("Opacity", look.opacity, 0...1, "%.0f%%", percent: true)
+        case .glass:
+            slider("Darken", look.darken, 0...0.9, "%.0f%%", percent: true)
+        case .tinted:
+            ColorPicker("Glass color", selection: lookColor(look), supportsOpacity: false)
+            slider("Intensity", look.opacity, 0...1, "%.0f%%", percent: true)
+        case .frosted:
+            Picker("Blur", selection: look.material) {
+                Section("Adjustable blur") { ForEach(BlurStyle.tunable) { Text($0.title).tag($0) } }
+                Section("Behind window") { ForEach(BlurStyle.appKit) { Text($0.title).tag($0) } }
+            }
+            if look.wrappedValue.material.isTunable {
+                slider("Blur radius", SwiftUI.Binding(get: { look.wrappedValue.blur * HUDStyle.maxBlurRadius },
+                                                      set: { look.wrappedValue.blur = $0 / HUDStyle.maxBlurRadius }),
+                       0...HUDStyle.maxBlurRadius, "%.1f pt")
+            } else {
+                slider("Blur amount", look.blur, 0...1, "%.0f%%", percent: true)
+            }
+            ColorPicker("Tint", selection: lookColor(look), supportsOpacity: false)
+            slider("Tint opacity", look.opacity, 0...1, "%.0f%%", percent: true)
+        }
+        slider("Shine", look.shine, 0...1, "%.0f%%", percent: true)
+        HStack {
+            Spacer()
+            Button("Reset \(Self.name(b))") { withAnimation(Theme.smooth) { prefs.hudStyle.resetLook(b) } }
+                .disabled(prefs.hudStyle.look(b) == prefs.hudStyle.defaultLook(b))
+        }
+    }
+
+    static func name(_ b: HUDStyle.Backdrop) -> String {
+        switch b { case .solid: "Solid"; case .glass: "Clear glass"; case .tinted: "Colored glass"; case .frosted: "Blurred" }
+    }
+
+    private func lookColor(_ look: SwiftUI.Binding<HUDStyle.BoxLook>) -> SwiftUI.Binding<Color> {
+        SwiftUI.Binding(get: { Color(nsColor: look.wrappedValue.color.ns) }, set: { look.wrappedValue.color = HUDStyle.RGBA(NSColor($0)) })
     }
 
     // MARK: Preview
@@ -133,12 +180,12 @@ struct HUDStyleSections: View {
                          y: a.vertical == .top ? 0 : a.vertical == .bottom ? 1 : 0.5)
     }
 
-    private func slider(_ title: String, _ value: SwiftUI.Binding<Double>, _ range: ClosedRange<Double>, _ fmt: String) -> some View {
-        LabeledContent(title) {
-            HStack {
-                Slider(value: value, in: range)
-                Text(String(format: fmt, value.wrappedValue)).monospacedDigit().foregroundStyle(.secondary).frame(width: 56, alignment: .trailing)
-            }
+    private func slider(_ title: String, _ value: SwiftUI.Binding<Double>, _ range: ClosedRange<Double>, _ fmt: String,
+                        percent: Bool = false) -> some View {
+        HStack(alignment: .center) {
+            Text(title)
+            Slider(value: value, in: range)
+            Text(String(format: fmt, percent ? value.wrappedValue * 100 : value.wrappedValue)).monospacedDigit().foregroundStyle(.secondary).frame(width: 56, alignment: .trailing)
         }
     }
 
@@ -148,17 +195,39 @@ struct HUDStyleSections: View {
     }
 }
 
-/// The box as the real bubble draws it: solid, clear glass, colored glass or blur.
-private struct BubbleBox<S: Shape>: ViewModifier {
+/// The box as the real bubble draws it, from the current backdrop's own look.
+private struct BubbleBox<S: InsettableShape>: ViewModifier {
     let st: HUDStyle
     let shape: S
     func body(content: Content) -> some View {
-        let color = Color(nsColor: st.background.ns)
-        switch st.box {
-        case .solid: content.background(color, in: shape)
-        case .glass: content.liquidGlass(in: shape)
-        case .tinted: content.liquidGlass(in: shape, tint: color)
-        case .frosted: content.background(color, in: shape).background(.ultraThinMaterial, in: shape)
+        let look = st.current, color = Color(nsColor: look.color.ns)
+        let boxed = Group {
+            switch st.box {
+            case .solid:
+                content.background(color.opacity(look.opacity), in: shape)
+            case .glass:
+                if #available(macOS 26, *) {
+                    content.glassEffect(Glass.clear.tint(look.darken > 0 ? .black.opacity(look.darken) : nil), in: shape)
+                } else { content.background(.ultraThinMaterial, in: shape) }
+            case .tinted:
+                if #available(macOS 26, *) {
+                    content.background(color.opacity(look.opacity * 0.7), in: shape)
+                        .glassEffect(Glass.regular.tint(color.opacity(look.opacity)), in: shape)
+                } else { content.background(color.opacity(look.opacity), in: shape).background(.regularMaterial, in: shape) }
+            case .frosted:
+                content.background(color.opacity(look.opacity), in: shape)
+                    .background {
+                        GeometryReader { g in
+                            if look.material.isTunable {
+                                BackdropBlur(params: look.backdropParams(corner: min(st.cornerRadius, g.size.height / 2)))
+                            } else {
+                                BehindWindowBlur(material: look.material.appKitMaterial ?? .hudWindow, radius: min(st.cornerRadius, g.size.height / 2))
+                                    .opacity(look.blur)
+                            }
+                        }
+                    }
+            }
         }
+        boxed.overlay(shape.strokeBorder(.white.opacity(look.shine * 0.7), lineWidth: look.shine > 0 ? 1 : 0))
     }
 }

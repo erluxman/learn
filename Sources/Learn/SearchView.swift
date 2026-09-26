@@ -76,23 +76,16 @@ struct SearchView: View {
             .glassID("search", in: glass)
             .pointerLight(Capsule(), strength: 0.8, radius: 180)
 
-            if model.currentApp != nil {
-                roundButton("arrow.clockwise", id: "refresh", help: "Re-read this app's shortcuts (⌘R)", spin: model.scanning) { model.refresh() }
-                    .disabled(model.scanning)
-                    .transition(.scale(scale: 0.5).combined(with: .opacity))
-            }
             roundButton("gearshape", id: "settings", help: "Learn Settings (⌘,)") { model.openSettings() }
         }
         .animation(Theme.smooth, value: model.currentApp?.id)
         .animation(Theme.snappy, value: model.scanning)
     }
 
-    private func roundButton(_ symbol: String, id: String, help: String, spin: Bool = false, action: @escaping () -> Void) -> some View {
+    private func roundButton(_ symbol: String, id: String, help: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.app(17, .medium))
-                .rotationEffect(.degrees(spin ? 360 : 0))
-                .animation(spin ? .linear(duration: 0.9).repeatForever(autoreverses: false) : .default, value: spin)
                 .frame(width: 58, height: 58)
         }
         .buttonStyle(LiquidButtonStyle(shape: Circle(), glassID: id, namespace: glass))
@@ -153,10 +146,22 @@ struct SearchView: View {
     private var emptyState: some View {
         VStack(spacing: 6) {
             HeroIcon(symbol: model.query.isEmpty ? "keyboard.fill" : "magnifyingglass", color: ambient, size: 52)
-            Text(model.query.isEmpty ? "Nothing here yet" : "No results for “\(model.query)”")
-                .font(.app(16, .semibold))
-            if model.currentApp != nil {
-                Text("Press ⌘R to scan this app again").font(.app(12)).foregroundStyle(.secondary)
+            if model.suggesting {
+                Text("Ranking shortcuts…").font(.app(16, .semibold))
+                Text("Scoring what's worth knowing in \(model.currentApp?.name ?? "this app").").font(.app(12)).foregroundStyle(.secondary)
+            } else if model.query.isEmpty, let app = model.currentApp {   // no history here yet: shortcuts appear as you use them
+                Text("Type to search \(app.name)").font(.app(16, .semibold))
+                HStack(spacing: 5) {
+                    Text("Shortcuts you use often show up here · press").font(.app(12)).foregroundStyle(.secondary)
+                    Keycaps(display: "⇥", size: 10, dim: true)
+                    Text("for suggestions").font(.app(12)).foregroundStyle(.secondary)
+                }
+            } else {
+                Text(model.query.isEmpty ? "Nothing here yet" : "No results for “\(model.query)”")
+                    .font(.app(16, .semibold))
+                if model.currentApp != nil {
+                    Text("Press ⌘R to scan this app again").font(.app(12)).foregroundStyle(.secondary)
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -188,7 +193,7 @@ struct SearchView: View {
                         .padding(.horizontal, 10).padding(.vertical, 7)
                         .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
                         .contentShape(Rectangle())
-                        .asButton(RowPressStyle()) { model.activate(i) }
+                        .asButton(RowPressStyle(sound: false)) { model.activate(i) }
                         .anchorPreference(key: SelectionAnchor.self, value: .bounds) { on ? $0 : nil }
                         .onHover { inside in if inside { model.hover(i) } }
                         }
@@ -209,6 +214,8 @@ struct SearchView: View {
 
     /// Heading a run of results sits under: what kind they are, or the menu they're in while browsing an app.
     private func section(_ hit: Hit) -> String {
+        if model.frequentIDs.contains(hit.id) { return "Frequently used" }
+        if model.suggesting, case .shortcut = hit { return "Suggested" }
         switch hit {
         case .answer: return "Answer"
         case .app: return "Applications"
@@ -292,7 +299,11 @@ struct SearchView: View {
             } else {
                 KeyHint(keys: "↩", label: "Run")
                 KeyHint(keys: Prefs.shared.recordKey.shortcut.display, label: "Set key")
-                KeyHint(keys: Prefs.shared.contextKey.shortcut.display, label: "Right-click")
+                if model.query.isEmpty {
+                    KeyHint(keys: "⇥", label: model.suggesting ? "Frequent" : "Suggested")
+                } else {
+                    KeyHint(keys: Prefs.shared.contextKey.shortcut.display, label: "Right-click")
+                }
                 KeyHint(keys: "⎋", label: "Back")
             }
         }

@@ -100,6 +100,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if self.model.recording != nil { self.handleRecorderKey(e); return nil }
             let cmd = e.modifierFlags.contains(.command)
             let code = Int(e.keyCode), mods = Recorder.mods(e.modifierFlags)
+            if code == kVK_Tab, mods.isEmpty, self.model.toggleSuggestions() { return nil }   // ⇥ on an empty search: suggestions
             if self.model.selectedShortcut != nil {   // configurable in Settings ▸ General ▸ Inside Learn
                 if Prefs.shared.recordKey.matches(code, mods) { self.model.startRecording(); return nil }
                 if Prefs.shared.contextKey.matches(code, mods) { self.model.contextMenu(); return nil }
@@ -161,7 +162,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         keyTap.observer = { code, mods in
             let app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-            DispatchQueue.main.async { KeyHUD.shared.pressed(code: code, mods: mods, app: app) }
+            DispatchQueue.main.async {
+                KeyHUD.shared.pressed(code: code, mods: mods, app: app)
+                UsageStore.shared.recordKey(code: code, mods: mods, app: app)
+            }
         }
         ElementScanner.onMenuOpened = { [weak self] pid, point in self?.menuSearch.start(pid: pid, near: point) }
         LearnActions.run = { [weak self] path in

@@ -26,9 +26,10 @@ final class SearchModel: ObservableObject {
     private static let settingsIndex: [(String, SettingsWindow.Tab)] = [
         ("Permissions", .permissions), ("Accessibility permission", .permissions), ("Send keystrokes & clicks permission", .permissions),
         ("Input Monitoring permission", .permissions), ("Launch at login", .permissions),
-        ("Appearance", .appearance), ("Glass: clear or regular blur, darkness", .appearance), ("Tint color of the glass", .appearance),
+        ("Appearance", .appearance), ("Blur: liquid glass, gaussian radius, vibrant, frosted, progressive, materials", .appearance), ("Grain / noise texture: fine, blue noise, film, fractal, paper, halftone", .appearance), ("Theme: colors, gradient, presets, grain", .appearance), ("Tint color of the glass", .appearance),
         ("Corner roundness", .appearance), ("Window shadow", .appearance), ("Pointer light", .appearance),
         ("Jelly wobble when dragging windows", .appearance), ("Hover motion", .appearance), ("App font, typeface", .appearance), ("Icon style", .appearance),
+        ("Sounds", .sounds), ("Click sound", .sounds), ("Shortcut sound", .sounds), ("Sound volume", .sounds),
         ("Hotkeys", .hotkeys), ("Open Learn hotkey", .hotkeys), ("Replace Spotlight (⌘Space opens Learn)", .hotkeys), ("Label clickable items hotkey", .hotkeys),
         ("Right-click the focused item hotkey", .hotkeys), ("Open Learn Settings hotkey", .hotkeys),
         ("Pointer mode hotkey (control the pointer with the keyboard)", .hotkeys), ("Move window to next screen hotkey", .hotkeys),
@@ -47,9 +48,13 @@ final class SearchModel: ObservableObject {
     private static let settingsTabs = Dictionary(settingsIndex.map { ([settingsGroup, $0.1.title, $0.0], $0.1) }, uniquingKeysWith: { a, _ in a })
 
     @Published var mode: Mode = .apps
+    /// ⇥ with nothing typed inside an app: the most relevant shortcuts instead of the most used.
+    @Published private(set) var suggesting = false
+
     @Published var query = "" {
         didSet {
             guard query != oldValue else { return }
+            suggesting = false
             notice = nil
             files = []
             fileSearch.search(Prefs.shared.searchFiles && currentApp != Self.settingsEntry ? query : "")
@@ -110,6 +115,10 @@ final class SearchModel: ObservableObject {
                 self?.globalDirty = true   // rescan or binding change: rebuild the from-anywhere index on next open
                 if case .shortcuts(let a) = self?.mode, a.id == n.object as? String { self?.recompute(keepSelection: true) }
             }
+        NotificationCenter.default.addObserver(forName: RelevanceStore.changed, object: nil, queue: .main) { [weak self] n in
+            guard let self, self.suggesting, case .shortcuts(let a) = self.mode, a.id == n.object as? String else { return }
+            self.recompute(keepSelection: true)
+        }
     }
 
     var currentApp: AppEntry? { if case .shortcuts(let a) = mode { a } else { nil } }
@@ -168,8 +177,13 @@ final class SearchModel: ObservableObject {
             // Anywhere, not just the top level: answer on top; definition, apps and files after this app's items.
             let (top, rest) = app == Self.settingsEntry ? ([], []) : extras(apps: rankedApps().filter { Fuzzy.rank(query, title: $0.name) ?? 0 >= 6_000 }.prefix(5), files: 12)
             let elsewhere = app == Self.settingsEntry ? [] : globalHits(excluding: app.id, limit: 8)
-            results = top + shortcuts.map(Hit.shortcut) + elsewhere + rest
-            scanning = Scanner.shared.busy.contains(app.id)
+            // Nothing typed: only the shortcuts you use most here (⇥: the most relevant ones); typing searches all of them.
+            let browsing = query.isEmpty && app != Self.settingsEntry
+            let picked = !browsing ? [] : suggesting ? RelevanceStore.shared.suggestions(menus, app: app.id, limit: 12)
+                                                     : UsageStore.shared.top(shortcuts, app: app.id, limit: 8)
+            frequentIDs = suggesting ? [] : Set(picked.map { Hit.shortcut($0).id })
+            results = top + (browsing ? picked : shortcuts).map(Hit.shortcut) + elsewhere + rest
+            scanning = Scanner.shared.busy.contains(app.id) && !quietScans.contains(app.id)
             if scanning { info = "Scanning \(app.name)…" }
             else if app == Self.settingsEntry { info = "Search Learn's settings · ↩ go there" }
             else if let entry {
@@ -184,11 +198,34 @@ final class SearchModel: ObservableObject {
             // Apps named like the query first, then every app's matching shortcuts, then looser app matches.
             let strong = query.isEmpty ? apps : apps.filter { Fuzzy.rank(query, title: $0.name) ?? 0 >= 6_000 }
             let weak = query.isEmpty ? [] : apps.filter { Fuzzy.rank(query, title: $0.name) ?? 0 < 6_000 }
-            results = top + strong.map(Hit.app) + global + weak.map(Hit.app) + rest
+            let frequent = query.isEmpty ? frequentEverywhere() : []
+            frequentIDs = Set(frequent.map(\.id))
+            results = top + frequent + strong.map(Hit.app) + global + weak.map(Hit.app) + rest
             info = "\(apps.count) apps\(global.isEmpty ? "" : " · \(global.count) shortcuts")\(files.isEmpty ? "" : " · \(files.count) files")"
         }
         if !keepSelection || selection >= count { selection = 0 }
         updateHighlight()
+    }
+
+    /// ⇥ with nothing typed in an app: switch between frequently used and suggested. Returns false when it doesn't apply.
+    func toggleSuggestions() -> Bool {
+        guard query.isEmpty, let app = currentApp, app != Self.settingsEntry else { return false }
+        suggesting.toggle()
+        recompute()
+        return true
+    }
+
+    /// Rows shown under "Frequently used" (ids of `results`).
+    private(set) var frequentIDs = Set<String>()
+
+    /// Your most used shortcuts across apps, for the top level with nothing typed.
+    private func frequentEverywhere() -> [Hit] {
+        let apps = Dictionary(allApps.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        return UsageStore.shared.topEverywhere(limit: 12).compactMap { use in
+            guard let app = apps[use.app],
+                  let s = ShortcutStore.shared.get(use.app)?.shortcuts.first(where: { $0.path == use.path }) else { return nil }
+            return Hit.global(s, app)
+        }.prefix(6).map { $0 }
     }
 
     private func rankedApps() -> [AppEntry] {
@@ -328,6 +365,7 @@ final class SearchModel: ObservableObject {
         if let index { selection = index }
         guard selection < count else { return }
         if let app = currentApp, let s = selectedShortcut {
+            if app != Self.settingsEntry { UsageStore.shared.record(app: app.id, path: s.path) }
             if app == Self.settingsEntry {   // Learn's own settings: go there; press visible controls off main
                 let el = screen.elements[s.id]
                 onClose(false)
@@ -341,6 +379,7 @@ final class SearchModel: ObservableObject {
                 let pid = app.runningApp?.processIdentifier
                 Debug.log("activate row '\(s.title)' path=\(s.path) el=\(el.map { "\($0.roleName) web=\($0.web) frame=\($0.frame)" } ?? "nil") screenApp=\(screen.appID) app=\(app.id)")
                 handFocus(to: app)
+                Sounds.play(.shortcut)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                     if s.path.first == LearnActions.group { LearnActions.run(s.path) }
                     else if let el { ElementScanner.perform(el) }
@@ -354,6 +393,7 @@ final class SearchModel: ObservableObject {
             switch results[selection] {
             case .shortcut: break   // only listed inside an app, handled above
             case .global(let s, let app):   // another app's shortcut: Executor activates or launches it, then presses the item
+                UsageStore.shared.record(app: app.id, path: s.path)
                 onClose(false)
                 Executor.run(s, in: app)
             case .app(let a) where alt:
@@ -371,6 +411,7 @@ final class SearchModel: ObservableObject {
             case .answer(let a):   // calculator / conversion: copy, back to the previous app to paste
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(a.value, forType: .string)
+                Sounds.play(.shortcut)
                 onClose(true)
                 KeyHUD.shared.flash(a.value, caption: "Copied")
             }
@@ -385,7 +426,21 @@ final class SearchModel: ObservableObject {
         recompute()
         guard app != Self.settingsEntry else { return }   // Learn has no menus to scan
         if cached == nil || cached!.stale || app.isSystem { refresh() }
+        else { refreshQuietly(app, since: cached!.scannedAt) }
     }
+
+    /// Every time an app is opened in the panel: re-read its menus in the background — no launch, no menus
+    /// flashing open, no spinner — so its list stays current a little at a time. At most every 30 s per app.
+    private func refreshQuietly(_ app: AppEntry, since scannedAt: Date) {
+        guard app.runningApp != nil, Date().timeIntervalSince(scannedAt) > 30 else { return }
+        quietScans.insert(app.id)
+        Scanner.shared.scan(app, launchIfNeeded: false) { [weak self] _ in
+            guard let self else { return }
+            self.quietScans.remove(app.id)
+            if self.currentApp == app, self.recording == nil { self.globalDirty = true; self.recompute(keepSelection: true) }
+        }
+    }
+    private var quietScans = Set<String>()
 
     /// Re-reads the app's menus now (launches it hidden if not running).
     func refresh() {
