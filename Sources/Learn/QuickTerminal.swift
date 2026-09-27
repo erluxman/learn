@@ -3,7 +3,7 @@ import AppKit
 /// Ghostty's quick terminal (the drop-down) hides the moment it stops being the key window when `quick-terminal-autohide`
 /// is on, and Learn's panel has to take the keyboard — so opening Learn over it always hid it. Learn grabs it as the
 /// panel opens (its contents stay readable after it hides) and brings it back through Ghostty's AppleScript
-/// (`perform action "toggle_quick_terminal"`) before running something in it, or when the panel is cancelled.
+/// (`perform action "toggle_quick_terminal"`) after the panel has closed — before running something in it, or on cancel.
 enum QuickTerminal {
     static let ghostty = "com.mitchellh.ghostty"
     private static let identifier = "com.mitchellh.ghostty.quickTerminal"
@@ -18,13 +18,27 @@ enum QuickTerminal {
 
     static func forget() { window = nil }
 
-    /// Shows it again if it was open when the panel opened (and `appID` is Ghostty), then runs `then` once it has slid in.
-    /// Otherwise runs `then` right away.
-    static func restore(for appID: String? = ghostty, then: @escaping () -> Void = {}) {
-        guard window != nil, appID == ghostty, let app = NSRunningApplication.runningApplications(withBundleIdentifier: ghostty).first
-        else { forget(); return then() }
-        forget()
-        guard find(app.processIdentifier) == nil else { return then() }   // autohide off: it never left
+    /// Whether it should come back for something done in `appID` (it was open and that's Ghostty). Clears the note either
+    /// way, so take it before closing the panel.
+    static func take(for appID: String? = ghostty) -> Bool {
+        defer { forget() }
+        return window != nil && appID == ghostty
+    }
+
+    /// Ghostty, while its quick terminal is on screen — that's where you are. On a desktop with no Ghostty window, macOS
+    /// refuses Ghostty's activation when it slides in (ghostty#2409): the quick terminal has the keyboard, but the app you
+    /// were in before stays "frontmost". (With autohide on, it's only on screen while it has the keyboard.)
+    static func ghosttyIfOnScreen() -> NSRunningApplication? {
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: ghostty).first,
+              find(app.processIdentifier) != nil else { return nil }
+        return app
+    }
+
+    /// Slides it back in (the panel must be closed by now, or it takes the keyboard and hides it again), then runs `then`.
+    static func bringBack(then: @escaping () -> Void = {}) {
+        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: ghostty).first else { return then() }
+        guard find(app.processIdentifier) == nil else { Debug.log("quick terminal still up"); return then() }   // autohide off: it never left
+        Debug.log("quick terminal restore space=\(Debug.space)")
         var err: NSDictionary?
         NSAppleScript(source: "tell application id \"\(ghostty)\" to perform action \"toggle_quick_terminal\" on terminal 1")?
             .executeAndReturnError(&err)

@@ -90,6 +90,9 @@ final class KeyTap {
     var onChord: () -> Void = {}
     private var chordArmed = false
     private var ctrlDown: Set<Int> = []   // 59 left ⌃, 62 right ⌃
+    /// While the panel is open without the keyboard (over Ghostty's quick terminal): every key press / release goes here
+    /// first; true = it was for the panel (swallowed).
+    var panelKeys: ((CGEvent, CGEventType) -> Bool)?
     /// True while Learn's recorder is open: keys must reach the recorder untouched.
     var suspended: () -> Bool = { false }
     private let queue = DispatchQueue(label: "learn.press", qos: .userInteractive)
@@ -123,6 +126,7 @@ final class KeyTap {
             else if chordArmed { chordArmed = false; DispatchQueue.main.async { self.onChord() } }
             return pass
         }
+        if type == .keyDown || type == .keyUp, let panelKeys, panelKeys(e, type) { return nil }
         if type == .keyUp {
             releaser?(Int(e.getIntegerValueField(.keyboardEventKeycode)))
             return pass

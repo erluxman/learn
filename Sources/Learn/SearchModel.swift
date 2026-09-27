@@ -179,7 +179,8 @@ final class SearchModel: ObservableObject {
             let list = app == Self.settingsEntry ? Self.settingsRows + onScreen
                                                   : Self.withBindings(learn + onScreen + menus, app: app.id)
             let scored = query.isEmpty ? list.map { ($0, 0) }
-                : list.compactMap { s in Fuzzy.rank(query, title: s.title, context: s.searchText, keys: s.display).map { (s, $0) } }
+                : list.compactMap { s in Fuzzy.rank(query, title: s.title, context: s.searchText, keys: s.display)
+                        .map { (s, $0 + (s.path.first == ElementScanner.marker ? Self.onScreenBoost : 0)) } }
                     .sorted { ($0.1, -$0.0.title.count, -$0.0.path.count) > ($1.1, -$1.0.title.count, -$1.0.path.count) }
             let shortcuts = scored.map(\.0)
             let outside = app == Self.settingsEntry
@@ -490,19 +491,20 @@ final class SearchModel: ObservableObject {
                 let pid = app.runningApp?.processIdentifier
                 Debug.log("activate row '\(s.title)' path=\(s.path) el=\(el.map { "\($0.roleName) web=\($0.web) frame=\($0.frame)" } ?? "nil") screenApp=\(screen.appID) app=\(app.id)")
                 Sounds.play(.shortcut)
-                QuickTerminal.restore(for: app.id) { [self] in   // Ghostty's drop-down hid when the panel opened: back first
-                    handFocus(to: app)
+                let quickTerminal = QuickTerminal.take(for: app.id)   // Ghostty's drop-down hid when the panel opened
+                handFocus(to: app)   // closes the panel first, so the drop-down can have the keyboard back
+                let run = {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                         if s.path.first == LearnActions.group { LearnActions.run(s.path) }
                         else if let el { ElementScanner.perform(el) }
                         else if let pid { DispatchQueue.global().async { _ = ElementScanner.pressMatching(path: s.path, pid: pid) } }
                     }
                 }
+                if quickTerminal { QuickTerminal.bringBack(then: run) } else { run() }
             default:
-                QuickTerminal.restore(for: app.id) { [self] in
-                    onClose(false)   // Executor activates the target app itself
-                    Executor.run(s, in: app)
-                }
+                let quickTerminal = QuickTerminal.take(for: app.id)
+                onClose(false)   // Executor activates the target app itself
+                if quickTerminal { QuickTerminal.bringBack { Executor.run(s, in: app) } } else { Executor.run(s, in: app) }
             }
         } else {
             switch results[selection] {
@@ -653,9 +655,9 @@ final class SearchModel: ObservableObject {
     }
 
     /// Esc is the only way back: shortcuts → apps; in apps it clears the query, then closes.
-    func escape() {
-        if currentApp != nil { if screenOnly && !query.isEmpty { query = "" } else { back() } }
-        else if !query.isEmpty { query = "" }
-        else { onClose(true) }
-    }
+    /// One press closes, like Spotlight (and brings Ghostty's quick terminal back). ⌫ on an empty search goes back instead.
+    func escape() { onClose(true) }
+
+    /// What's on screen beats a shortcut matching equally well: one Fuzzy tier up (an exact shortcut name still wins).
+    static let onScreenBoost = 1_000
 }

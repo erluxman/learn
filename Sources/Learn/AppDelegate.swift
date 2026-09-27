@@ -32,6 +32,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Chromium browsers show page contents to Learn only while their accessibility is on: keep it on, always.
         NSWorkspace.shared.runningApplications.forEach(ElementScanner.keepWebContentOn)
+        let ws = NSWorkspace.shared.notificationCenter
+        ws.addObserver(forName: NSWorkspace.didActivateApplicationNotification, object: nil, queue: .main) { [weak self] n in
+            guard self?.panel.isVisible == true else { return }
+            Debug.log("activated \((n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication)?.bundleIdentifier ?? "?") space=\(Debug.space)")
+        }
+        ws.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { _ in
+            Debug.log("space changed → \(Debug.space) front=\(Debug.front)")
+        }
         for name in [NSWorkspace.didLaunchApplicationNotification, NSWorkspace.didActivateApplicationNotification] {
             NSWorkspace.shared.notificationCenter.addObserver(forName: name, object: nil, queue: .main) { n in
                 if let app = n.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication { ElementScanner.keepWebContentOn(app) }
@@ -128,43 +136,76 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             let me = Bundle.main.bundleIdentifier
             let candidates = [NSWorkspace.shared.frontmostApplication, NSWorkspace.shared.menuBarOwningApplication, lastApp]
-            let target = candidates.compactMap { $0 }.first { $0.bundleIdentifier != me && !$0.isTerminated }
+            let target = QuickTerminal.ghosttyIfOnScreen()
+                ?? candidates.compactMap { $0 }.first { $0.bundleIdentifier != me && !$0.isTerminated }
             panel.returnTo = target   // focus still goes back to it on close
             QuickTerminal.capture(target)   // before the panel takes the keyboard and Ghostty's drop-down hides
+            Debug.log("show target=\(target?.bundleIdentifier ?? "nil") quickTerminal=\(QuickTerminal.window != nil) hasWindow=\(target.map(Self.hasOpenWindow) ?? false) space=\(Debug.space)")
             // Nothing open (e.g. Finder on a bare desktop): open on the app list, as if no app were selected.
-            model.willShow(frontmost: target.flatMap { Self.hasOpenWindow($0) ? $0 : nil })
+            // (Ghostty's quick terminal floats above normal windows, so it's counted separately.)
+            model.willShow(frontmost: target.flatMap { Self.hasOpenWindow($0) || QuickTerminal.window != nil ? $0 : nil })
         }
-        panel.present()
+        panel.present(takeKey: QuickTerminal.window == nil)   // over the quick terminal: it keeps the keyboard, stays up
     }
 
     private func installKeyMonitor() {
         NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .keyUp]) { [weak self] e in
             guard let self, self.panel.isKeyWindow else { return e }
-            if e.type == .keyUp { return self.chordKeyUp(e) }
-            if self.model.recording != nil { self.handleRecorderKey(e); return nil }
-            let cmd = e.modifierFlags.contains(.command)
-            let code = Int(e.keyCode), mods = Recorder.mods(e.modifierFlags)
-            if let action = Self.editAction(e) { NSApp.sendAction(action, to: nil, from: nil); return nil }
-            if code == kVK_Tab, mods.isEmpty, self.model.enterScreenOnly() { return nil }   // ⇥ on an empty search: on-screen items only
-            if code == kVK_Tab, mods == [.shift], self.model.toggleSuggestions() { return nil }   // ⇧⇥ on an empty search: frequent ↔ suggested
-            if let handled = self.tabChord(e, code: code, mods: mods) { return handled }
-            if self.model.selectedShortcut != nil, Prefs.shared.recordKey.matches(code, mods) {   // Settings ▸ General ▸ Inside Learn
-                self.model.startRecording(); return nil
-            }
-            switch code {
-            case kVK_DownArrow: self.model.move(1)
-            case kVK_UpArrow: self.model.move(-1)
-            case kVK_Return where cmd && self.model.selectedShortcut == nil: self.model.activate(alt: true)
-            case kVK_Return, kVK_ANSI_KeypadEnter: self.model.activate()
-            case kVK_Tab where mods == [.shift]: self.model.move(-1)
-            case kVK_Escape: self.model.escape()
-            case kVK_Delete where self.model.query.isEmpty && self.model.currentApp != nil: self.model.back()
-            case kVK_ANSI_R where cmd: self.model.refresh()
-            case kVK_ANSI_W where cmd: self.panel.dismiss()
-            case kVK_ANSI_Comma where cmd: self.model.openSettings()
-            default: return e
-            }
-            return nil
+            return self.panelKey(e)
+        }
+        // The panel open over Ghostty's quick terminal doesn't take the keyboard (the drop-down would hide): Learn's key tap
+        // hands it every key instead, and they never reach the terminal. The panel hotkey passes (it closes the panel).
+        keyTap.panelKeys = { [weak self] cg, type in
+            guard let self, self.panel.isVisible, !self.panel.isKeyWindow, let e = NSEvent(cgEvent: cg) else { return false }
+            if type == .keyDown, Prefs.shared.panelKey.matches(Int(e.keyCode), Recorder.mods(e.modifierFlags)) { return false }
+            if let rest = self.panelKey(e, focused: false), rest.type == .keyDown { self.typeWithoutFocus(rest) }
+            return true
+        }
+    }
+
+    /// A key for the panel; returns it when the panel had no use for it (typing for the search field).
+    /// `focused`: the panel has the keyboard, so editing keys go to its text field.
+    private func panelKey(_ e: NSEvent, focused: Bool = true) -> NSEvent? {
+        if e.type == .keyUp { return chordKeyUp(e) }
+        if model.recording != nil { handleRecorderKey(e); return nil }
+        let cmd = e.modifierFlags.contains(.command)
+        let code = Int(e.keyCode), mods = Recorder.mods(e.modifierFlags)
+        if focused, let action = Self.editAction(e) { NSApp.sendAction(action, to: nil, from: nil); return nil }
+        if code == kVK_Tab, mods.isEmpty, model.enterScreenOnly() { return nil }   // ⇥ on an empty search: on-screen items only
+        if code == kVK_Tab, mods == [.shift], model.toggleSuggestions() { return nil }   // ⇧⇥ on an empty search: frequent ↔ suggested
+        if let handled = tabChord(e, code: code, mods: mods) { return handled }
+        if model.selectedShortcut != nil, Prefs.shared.recordKey.matches(code, mods) {   // Settings ▸ General ▸ Inside Learn
+            model.startRecording(); return nil
+        }
+        switch code {
+        case kVK_DownArrow: model.move(1)
+        case kVK_UpArrow: model.move(-1)
+        case kVK_Return where cmd && model.selectedShortcut == nil: model.activate(alt: true)
+        case kVK_Return, kVK_ANSI_KeypadEnter: model.activate()
+        case kVK_Tab where mods == [.shift]: model.move(-1)
+        case kVK_Escape: model.escape()
+        case kVK_Delete where model.query.isEmpty && model.currentApp != nil: model.back()
+        case kVK_ANSI_R where cmd: model.refresh()
+        case kVK_ANSI_W where cmd: panel.dismiss()
+        case kVK_ANSI_Comma where cmd: model.openSettings()
+        default: return e
+        }
+        return nil
+    }
+
+    /// Typing into the search while the panel doesn't have the keyboard: characters, ⌫, ⌘⌫ (clear), ⌘V (paste).
+    private func typeWithoutFocus(_ e: NSEvent) {
+        let m = e.modifierFlags.intersection([.command, .control, .option])
+        switch Int(e.keyCode) {
+        case kVK_Delete where m.contains(.command) || m.contains(.option): model.query = ""
+        case kVK_Delete: if !model.query.isEmpty { model.query.removeLast() }
+        case kVK_ANSI_V where m == .command: model.query += NSPasteboard.general.string(forType: .string)?
+            .components(separatedBy: .newlines).joined(separator: " ") ?? ""
+        default:
+            guard !m.contains(.command), !m.contains(.control), let s = e.characters, !s.isEmpty,
+                  s.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) && !(0xF700...0xF8FF).contains($0.value) })
+            else { return }   // arrows, F-keys and other function keys
+            model.query += s
         }
     }
 

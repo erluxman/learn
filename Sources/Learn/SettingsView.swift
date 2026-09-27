@@ -656,7 +656,7 @@ private struct PanelSections: View {
                          ("⇥ + Space", "Right-click the highlighted on-screen item"),
                          ("⇥ ", "Nothing typed in an app: search only what's on screen"), ("⇧⇥ ", "Nothing typed in an app: frequently used ↔ suggested"),
                          ("↑", "Move the selection up"), ("↓", "Move the selection down"),
-                         ("⎋", "Back to the app list, then close (or delete on empty search)"), ("⌘R", "Full rescan of this app (it also refreshes quietly each time you open it)"),
+                         ("⎋", "Close Learn"), ("⌫", "Empty search: back to the app list"), ("⌘R", "Full rescan of this app (it also refreshes quietly each time you open it)"),
                          ("⌘,", "Open these settings"), ("⌘W", "Close Learn")], id: \.1) { key, what in
                     HStack(alignment: .center) {
                         Text(what).frame(maxWidth: .infinity, alignment: .leading)
