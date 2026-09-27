@@ -57,12 +57,15 @@ struct SearchView: View {
 
     private var bar: some View {
         HStack(spacing: 14) {
-            if let app = model.currentApp {
+            if model.screenOnly {   // ⇥: searching only what's on screen
+                Image(systemName: "cursorarrow.rays").font(.app(21)).foregroundStyle(.blue)
+            } else if let app = model.currentApp {
                 Image(nsImage: AppCatalog.icon(app)).resizable().interpolation(.high).frame(width: 26, height: 26)
             } else {
                 Image(systemName: "magnifyingglass").font(.app(21)).foregroundStyle(.secondary)
             }
-            TextField(model.currentApp.map { "Search \($0.name)" } ?? "Learn Search", text: $model.query)
+            TextField(model.currentApp.map { model.screenOnly ? "Search on screen in \($0.name)" : "Search \($0.name)" } ?? "Learn Search",
+                      text: $model.query)
                 .textFieldStyle(.plain)
                 .font(.app(26))
                 .focused($focused)

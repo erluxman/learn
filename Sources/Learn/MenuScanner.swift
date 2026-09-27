@@ -7,7 +7,10 @@ enum MenuScanner {
         "AXMenuItemCmdModifiers", "AXMenuItemCmdGlyph",
     ] as CFArray
 
-    private static let skipLists: Set<String> = ["Open Recent", "Recent Items", "History", "Bookmarks", "Recently Closed", "Services"]
+    /// Long dynamic lists (recent files, browser history and bookmarks): kept, but capped per app, so search can offer
+    /// bookmarks and, lower down, history and recent files. Services are never kept.
+    private static let documentLists: Set<String> = ["Open Recent", "Recent Items", "History", "Bookmarks", "Recently Closed"]
+    private static let maxDocuments = 300
 
     static func menuBar(pid: pid_t) -> AXUIElement? {
         let app = AXUIElementCreateApplication(pid)
@@ -37,15 +40,16 @@ enum MenuScanner {
         var out: [Shortcut] = []
         var empty: [[String]] = []
         var seen = Set<String>()
+        var documents = 0   // document-list items kept so far (capped)
         for top in children(bar).dropFirst() {   // first = Apple menu, same in every app (covered by System list)
             let name = title(top)
-            for menu in children(top) { walk(menu, path: [name], depth: 0, into: &out, empty: &empty, seen: &seen) }
+            for menu in children(top) { walk(menu, path: [name], depth: 0, into: &out, empty: &empty, seen: &seen, documents: &documents) }
         }
         return (out, empty)
     }
 
     private static func walk(_ menu: AXUIElement, path: [String], depth: Int, into out: inout [Shortcut],
-                             empty: inout [[String]], seen: inout Set<String>) {
+                             empty: inout [[String]], seen: inout Set<String>, documents: inout Int) {
         guard depth < 6 else { return }
         for item in children(menu) {
             var raw: CFArray?
@@ -57,7 +61,7 @@ enum MenuScanner {
             if !kids.isEmpty {
                 for sub in kids {
                     if children(sub).isEmpty { empty.append(path + [t]) }
-                    walk(sub, path: path + [t], depth: depth + 1, into: &out, empty: &empty, seen: &seen)
+                    walk(sub, path: path + [t], depth: depth + 1, into: &out, empty: &empty, seen: &seen, documents: &documents)
                 }
                 continue
             }
@@ -75,9 +79,13 @@ enum MenuScanner {
             } else if let vk, vk != 0, let n = Keys.names[vk] {   // vk 0 ("A") = unset when char is empty
                 (key, code) = (n, vk)
             } else {
-                // No shortcut: keep as a plain menu command (still runnable via AXPress),
-                // except long dynamic lists (recent files, browser history/bookmarks).
-                if path.contains(where: skipLists.contains) { continue }
+                // No shortcut: keep as a plain menu command (still runnable via AXPress). Services are skipped;
+                // long document lists are capped.
+                if path.contains("Services") { continue }
+                if path.contains(where: documentLists.contains) {
+                    guard documents < maxDocuments else { continue }
+                    documents += 1
+                }
                 (key, code) = ("", nil)
             }
 

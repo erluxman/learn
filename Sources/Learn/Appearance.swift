@@ -17,40 +17,38 @@ struct Appearance: Codable, Equatable {
     /// What Learn's windows are made of: a living gradient in each page's color (the Cleaner look), one in the
     /// theme's colors, or glass (the blur and tint settings below).
     enum Surface: String, Codable, CaseIterable, Identifiable {
-        case colorful, theme, glass
+        case colorful, glass
         var id: Self { self }
         var title: String {
-            switch self { case .colorful: "Colorful gradient"; case .theme: "Theme gradient"; case .glass: "Glass" }
+            switch self { case .colorful: "Colorful gradient"; case .glass: "Liquid glass" }
+        }
+        /// Surfaces that no longer exist (the old "theme" gradient) come back as Colorful instead of failing to load.
+        init(from decoder: Decoder) throws {
+            self = Surface(rawValue: try decoder.singleValueContainer().decode(String.self)) ?? .colorful
         }
     }
 
     var material = Material.regular           // Liquid Glass comes in two blur levels: clear and regular
     var tint = HUDStyle.RGBA(NSColor.systemPurple)
-    var tintStrength = 0.0                    // 0 no color … 1 strongly colored glass
-    var darkness = 0.0                        // 0 as macOS draws it … 1 smoked glass
-    var cornerRadius = 26.0
-    var shadow = 0.5
-    var light = 1.0                           // how strongly glass catches the pointer
+    var tintStrength = 0.0                    // Liquid glass only: 0 no color … 1 strongly colored glass
     var wobble = 1.0                          // jelly wobble when a window is dragged; 0 off
-    var hoverMotion = true                    // swell, lean and tilt under the pointer
-    var fontChoice: String? = nil             // "" SF Pro · ".rounded" · ".serif" · ".mono" · a font family; nil = default
 
-    var iconStyleChoice: IconStyle? = nil     // nil = default
-    var iconStyle: IconStyle { iconStyleChoice ?? .slab }   // icons in pages, and the selected sidebar item
-    var idleIconStyleChoice: IconStyle? = nil
-    var idleIconStyle: IconStyle { idleIconStyleChoice ?? .frosted }   // sidebar items that aren't selected, as in the Cleaner
+    // Settled looks, no longer settings (older saved values for them are ignored):
+    var cornerRadius: Double { 40 }
+    var shadow: Double { 1 }
+    var hoverMotion: Bool { true }            // swell, lean and tilt under the pointer
+    var iconStyle: IconStyle { .gradient }    // icons in pages, and the selected sidebar item
+    var idleIconStyle: IconStyle { .plain }   // sidebar items that aren't selected
     var surfaceChoice: Surface? = nil
     var surface: Surface { surfaceChoice ?? .colorful }
 
-    var clickSoundChoice: SoundEffect? = nil
-    var shortcutSoundChoice: SoundEffect? = nil
     var soundVolumeChoice: Double? = nil
-    var clickSound: SoundEffect { clickSoundChoice ?? .tick }
-    var shortcutSound: SoundEffect { shortcutSoundChoice ?? .pop }
+    var clickSound: SoundEffect { .tick }       // settled sounds; only the volume is a setting
+    var shortcutSound: SoundEffect { .coin }    // game-style coin: the shortcut ran
     var soundVolume: Double { soundVolumeChoice ?? 0.5 }
 
     static let defaultFont = ""   // SF Pro, as Spotlight
-    var font: String { fontChoice ?? Self.defaultFont }
+    var font: String { Self.defaultFont }
     /// System designs go through SwiftUI's font design; a family name is used as a custom font.
     var fontDesign: Font.Design? {
         switch font {
@@ -62,46 +60,26 @@ struct Appearance: Codable, Equatable {
         }
     }
 
-    var tintColor: Color { Color(nsColor: themeColors[0].ns) }
+    var tintColor: Color { Color(nsColor: tint.ns) }
 
-    /// The one tint the glass is drawn with: the chosen color, pulled toward black by `darkness`; nil = untinted.
-    var themeColorsChoice: [HUDStyle.RGBA]? = nil   // 1–3 colors from the theme designer; nil = the single `tint`
-    var grainChoice: Double? = nil
-    var themeColors: [HUDStyle.RGBA] { themeColorsChoice.flatMap { $0.isEmpty ? nil : $0 } ?? [tint] }
-    var grain: Double { grainChoice ?? 0 }
-    var grainStyleChoice: GrainStyle? = nil
-    var grainScaleChoice: Double? = nil
-    var grainStyle: GrainStyle { grainStyleChoice ?? (grain > 0 ? .film : .none) }
-    var grainScale: Double { grainScaleChoice ?? 1 }
-    var grainColor: HUDStyle.RGBA? = nil      // nil: grey grain blended into the glass; a color: grain in that color
 
-    var blurStyleChoice: BlurStyle? = nil     // nil: from `material` (before blur styles existed)
-    var blurAmountChoice: Double? = nil
-    var blur: BlurStyle { blurStyleChoice ?? (material == .clear ? .liquidClear : .liquidRegular) }
-    var blurAmount: Double { blurAmountChoice ?? 1 }
-    var blurRadiusChoice: Double? = nil       // tunable blurs only; nil = the style's preset
-    var blurSaturationChoice: Double? = nil
-    var blurRadius: Double { min(blurRadiusChoice ?? blur.preset.radius, BlurStyle.maxRadius) }
-    var blurSaturation: Double { blurSaturationChoice ?? blur.preset.saturation }
+    // No grain, and Liquid Glass at its regular blur: fixed, no longer settings.
+    var grain: Double { 0 }
+    var grainStyle: GrainStyle { .none }
+    var grainScale: Double { 1 }
+    var grainColor: HUDStyle.RGBA? { nil }
+    var blur: BlurStyle { .liquidRegular }
+    var blurAmount: Double { 1 }
+    var blurRadius: Double { min(blur.preset.radius, BlurStyle.maxRadius) }
+    var blurSaturation: Double { blur.preset.saturation }
 
-    /// The theme's colors averaged: what the glass itself is tinted with.
-    private var themeBlend: NSColor {
-        let cs = themeColors.map { $0.ns.usingColorSpace(.sRGB) ?? .white }
-        let n = CGFloat(cs.count)
-        return NSColor(srgbRed: cs.map(\.redComponent).reduce(0, +) / n, green: cs.map(\.greenComponent).reduce(0, +) / n,
-                       blue: cs.map(\.blueComponent).reduce(0, +) / n, alpha: 1)
-    }
+    /// Gradients draw their own color; only Liquid glass takes a tint.
+    var sheen: [Color]? { nil }
 
-    /// With 2–3 theme colors: the gradient glass can't hold (its tint is one color), laid lightly on top of it.
-    var sheen: [Color]? {
-        themeColors.count > 1 && tintStrength > 0 ? themeColors.map { Color(nsColor: $0.ns).opacity(tintStrength * 0.4) } : nil
-    }
-
+    /// Liquid glass tinted with the chosen color at the chosen intensity; nil = untinted (and on gradient surfaces).
     var glassTint: Color? {
-        guard tintStrength > 0 || darkness > 0 else { return nil }
-        let base = tintStrength > 0 ? themeBlend : .black
-        let color = base.blended(withFraction: tintStrength > 0 ? darkness : 0, of: .black) ?? base
-        return Color(nsColor: color.withAlphaComponent(max(tintStrength, darkness)))
+        guard surface == .glass, tintStrength > 0 else { return nil }
+        return Color(nsColor: tint.ns.withAlphaComponent(tintStrength))
     }
     var radius: CGFloat { cornerRadius }
 }

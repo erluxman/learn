@@ -15,5 +15,6 @@
     <key>LSMinimumSystemVersion</key><string>14.0</string>
     <key>LSUIElement</key><true/>
     <key>NSHighResolutionCapable</key><true/>
+    <key>NSAppleEventsUsageDescription</key><string>Learn brings Ghostty's quick terminal back after its search panel closes, so shortcuts and clicks land in it.</string>
 </dict>
 </plist>

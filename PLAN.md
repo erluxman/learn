@@ -35,6 +35,7 @@ system + app changes; per-app "Refresh".
 | `Texture.swift` | Settings ▸ Appearance ▸ Glass & texture (Glass: Liquid | Frosted switch + Opacity for every blur; defaults = Spotlight, "Reset to Spotlight Look"): `BlurStyle` (Liquid Glass ×2, SwiftUI materials ×5, AppKit behind-window ×10, none) + amount; `GrainStyle` (11 generated seamless tiles, each with its blend) + amount + size |
 | `Theme.swift` | design system: radii, springs, `liquidGlass(in:)` (macOS 26 glass, material fallback), `GlassGroup`, `Keycaps`, `IconTile`, `KeyHint` |
 | `SettingsView.swift` | sidebar Settings (Permissions · Hotkeys · Learn Panel · On Screen · Search · Advanced · My Shortcuts), hero per pane, `KeyRecorder` |
+| `TerminalGrid.swift` | where a terminal's character cells really are (Ghostty: whole-pixel cells inside `window-padding-x/y` from `ghostty +show-config`, balanced padding = centred, top ≤ left), so on-screen terminal text (herdr buttons) is outlined and clicked exactly |
 | `Fuzzy.swift` | tiny fuzzy scorer (subsequence + prefix bonus) |
 | `build.sh` | `swift build -c release` → assemble `Learn.app` (Info.plist, LSUIElement) → codesign w/ Apple Development id → copy to `/Applications` (so Spotlight finds it; removes any old `~/Applications` copy) |
 
@@ -108,3 +109,8 @@ Nothing is written into the apps' own preferences.
   Accessibility / ListenEvent / PostEvent; `--purge` also deletes data + settings.
 - `./build.sh` is the dev loop (installs to /Applications, replacing the DMG copy there).
 - Opening the app → Settings (Permissions tab if anything's missing); the hotkey → search. Silent at login.
+
+## On-screen items
+- ⇥ on an empty search inside an app: search only what's on screen (buttons, links, text) — no shortcuts, apps or files. ⇥ / ⌫ / ⎋ on empty leaves it. ⇧⇥: frequently used ↔ suggested shortcuts.
+- Chromium browsers (Brave, Chrome, Edge, Arc…) expose page contents only after `AXEnhancedUserInterface` is turned on, and forget it on restart. Learn keeps it on, never off: at launch, when a browser launches, whenever one comes to the front, and in the scan (which rescans ≤ 4 × 0.8 s while a freshly enabled browser builds its page tree, ~2 s).
+- Ghostty's quick terminal (`QuickTerminal.swift`) hides when it loses key status (`quick-terminal-autohide`), which the panel always causes. Learn grabs it before the panel opens and scans only it; before running a shortcut / click in Ghostty, or when the panel is cancelled, it brings it back via Ghostty's AppleScript (`perform action "toggle_quick_terminal"`, needs Automation permission) and waits for the slide-in.

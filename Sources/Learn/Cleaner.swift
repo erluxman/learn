@@ -508,7 +508,7 @@ private struct SidebarItem: View {
         let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
         Button(action: action) {
             HStack(spacing: 14) {
-                ModuleIcon(module: module, size: 34, mono: !selected && module != .smartCare)
+                ModuleIcon(module: module, size: 34, mono: !selected && module != .smartCare, animating: (progress ?? 1) < 1)
                     .frame(width: 30, height: 30)
                     .modifier(IconHover(size: 30))
                 if !compact {
@@ -588,7 +588,7 @@ private struct ModuleHome: View {
             let h = g.size.height
             VStack(spacing: 0) {
                 ZStack {
-                    ModuleIcon(module: m, size: 300)
+                    ModuleIcon(module: m, size: 300, animating: scanning)
                         .modifier(IconHover(size: 300))
                         .scaleEffect(scanning ? 0.9 : 1)
                     if scanning {
@@ -761,7 +761,7 @@ private struct AreaCard: View {
                     VStack(spacing: 0) {
                         Text(area.scanning).font(.system(size: 26, weight: .semibold)).padding(.top, 20)
                         Spacer(minLength: 0)
-                        ModuleIcon(module: area, size: min(s.height * 0.56, s.width * 0.5))
+                        ModuleIcon(module: area, size: min(s.height * 0.56, s.width * 0.5), animating: true)
                         Spacer(minLength: 0)
                         Text(state.ticker).font(.system(size: 12.5)).foregroundStyle(.white.opacity(0.85))
                             .lineLimit(1).truncationMode(.middle).frame(maxWidth: s.width * 0.8)
@@ -770,10 +770,12 @@ private struct AreaCard: View {
                     .frame(width: s.width, height: s.height)
                     .transition(.opacity)
                 } else {
-                    // Icon peeking in from the corner.
-                    ModuleIcon(module: area, size: min(s.height, 200) * (results ? 0.7 : 0.9))
-                        .position(x: results ? s.width - min(s.height, 200) * 0.2 : s.width * 0.62,
-                                  y: results ? min(s.height, 200) * 0.18 : s.height * 0.95)
+                    // Icon peeking in from the bottom while the area waits; once it's scanned it moves up to the top
+                    // corner, leaving the bottom for what was found.
+                    let corner = results || scanned
+                    ModuleIcon(module: area, size: min(s.height, 200) * (corner ? 0.7 : 0.9))
+                        .position(x: corner ? s.width - min(s.height, 200) * 0.2 : s.width * 0.62,
+                                  y: corner ? min(s.height, 200) * 0.18 : s.height * 0.95)
                         .opacity(0.95)
                     VStack(alignment: .leading, spacing: 0) {
                         HStack(spacing: 8) {
@@ -803,6 +805,7 @@ private struct AreaCard: View {
             .clipShape(shape)
         }
         .animation(CleanerMotion.spring, value: active)
+        .animation(CleanerMotion.spring, value: scanned)
     }
 
     private var reviewable: Bool { area == .cleanup || area == .performance }
@@ -883,36 +886,24 @@ struct CleanerActionButton: View {
         let d = CleanerLayout.button
         TimelineView(.animation(minimumInterval: 1 / 30)) { ctx in
             let breathe = 0.5 + 0.5 * sin(ctx.date.timeIntervalSinceReferenceDate * 2.2)
-            let sink: CGFloat = pressed ? 3 : 0            // how far the face travels down when pressed
-            let wall: CGFloat = 5 - sink                  // visible side of the disc
             ZStack {
                 // Halo spilling onto the surface.
                 Circle().fill(RadialGradient(colors: [color.opacity(0.5 + 0.2 * breathe), color.opacity(0)], center: .center,
                                              startRadius: d * 0.35, endRadius: d * 0.95))
                     .frame(width: d * 1.9, height: d * 1.9)
-                // Contact shadow: tight and dark right under the disc, softer further out; flattens when pressed.
-                Ellipse().fill(.black.opacity(pressed ? 0.45 : 0.35))
-                    .frame(width: d * 0.92, height: d * 0.3).blur(radius: pressed ? 4 : 8)
-                    .offset(y: d * 0.5 + (pressed ? 2 : 8))
-                Ellipse().fill(.black.opacity(0.2))
+                // Soft shadow under the disc: the only depth it needs; flattens when pressed.
+                Ellipse().fill(.black.opacity(pressed ? 0.4 : 0.3))
+                    .frame(width: d * 0.92, height: d * 0.3).blur(radius: pressed ? 5 : 8)
+                    .offset(y: d * 0.45 + (pressed ? 1 : 5))
+                Ellipse().fill(.black.opacity(0.18))
                     .frame(width: d * 1.1, height: d * 0.45).blur(radius: 14)
-                    .offset(y: d * 0.5 + (pressed ? 4 : 16))
-                // Side wall: the disc's thickness, darker, under the face.
-                Circle().fill(LinearGradient(colors: [color.mix(.black, 0.35), color.mix(.black, 0.6)], startPoint: .top, endPoint: .bottom))
-                    .frame(width: d, height: d)
-                    .offset(y: wall)
-                Circle().strokeBorder(.white.opacity(0.5), lineWidth: 1.5).frame(width: d, height: d).offset(y: wall)
-                // Face.
+                    .offset(y: d * 0.45 + (pressed ? 3 : 12))
+                // Face: a flat disc, lit a little from the top, with a white rim.
                 ZStack {
-                    Circle().fill(LinearGradient(colors: [color.mix(.white, 0.3), color, color.mix(.black, 0.12)],
+                    Circle().fill(LinearGradient(colors: [color.mix(.white, 0.22), color, color.mix(.black, 0.1)],
                                                  startPoint: .top, endPoint: .bottom))
-                    // Soft dome light.
-                    Circle().fill(RadialGradient(colors: [.white.opacity(pressed ? 0.2 : 0.38), .clear], center: UnitPoint(x: 0.5, y: 0.15),
+                    Circle().fill(RadialGradient(colors: [.white.opacity(pressed ? 0.15 : 0.28), .clear], center: UnitPoint(x: 0.5, y: 0.15),
                                                  startRadius: 0, endRadius: d * 0.6))
-                    // Bevel: bright upper lip, shaded lower lip.
-                    Circle().stroke(LinearGradient(colors: [.white.opacity(0.75), .white.opacity(0)], startPoint: .top, endPoint: .center),
-                                    lineWidth: 3).padding(3).blur(radius: 1)
-                    Circle().stroke(.black.opacity(0.28), lineWidth: 6).blur(radius: 4).offset(y: -2).mask(Circle())
                     Circle().strokeBorder(.white.opacity(0.9), lineWidth: 2)
                     if state.phase == .scanning {
                         Circle().trim(from: 0, to: state.progress)
@@ -926,9 +917,8 @@ struct CleanerActionButton: View {
                         .contentTransition(.opacity)
                 }
                 .frame(width: d, height: d)
-                .offset(y: sink)
             }
-            .scaleEffect(pressed ? 0.98 : hover ? 1.04 : 1)
+            .scaleEffect(pressed ? 0.95 : hover ? 1.04 : 1)
         }
         .frame(width: d + 20, height: d + 20)
         .contentShape(Circle())

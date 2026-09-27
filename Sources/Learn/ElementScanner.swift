@@ -34,16 +34,20 @@ enum ElementScanner {
 
     /// Focused window first, then other visible windows. Stops at `budget` seconds / `limit` nodes.
     /// `windowTitle`: only that window (used to scan Learn's own Settings window).
-    static func scan(pid: pid_t, budget: TimeInterval = 0.6, limit: Int = 4000, windowTitle: String? = nil) -> [ScreenElement] {
+    /// `only`: scan just this window (Ghostty's quick terminal, grabbed before it hid).
+    static func scan(pid: pid_t, budget: TimeInterval = 0.6, limit: Int = 4000, windowTitle: String? = nil,
+                     only: AXUIElement? = nil) -> [ScreenElement] {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.5)
-        AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)   // Electron/Chromium
+        AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)   // Electron
+        if enableWebContent(app, pid: pid) { usleep(350_000) }   // first time: give the browser a moment to build the page's tree
         var windows: [AXUIElement] = []
         if let w: AXUIElement = value(app, kAXFocusedWindowAttribute) { windows.append(w) }
         for w in (value(app, kAXWindowsAttribute) as [AXUIElement]?) ?? [] where !windows.contains(where: { CFEqual($0, w) }) {
             if (value(w, kAXMinimizedAttribute) as Bool?) != true { windows.append(w) }
         }
         if let windowTitle { windows = windows.filter { (value($0, kAXTitleAttribute) as String?) == windowTitle } }
+        if let only { windows = [only] }
         let deadline = Date().addingTimeInterval(budget)
         var out: [ScreenElement] = []
         var visited = 0
@@ -51,6 +55,7 @@ enum ElementScanner {
             guard let wf = frame(w) else { continue }
             walk(w, clip: wf, depth: 0, inRow: false, inWeb: false, out: &out, visited: &visited, limit: limit, deadline: deadline)
         }
+        Debug.log("scan pid=\(pid) windows=\(windows.count) visited=\(visited) found=\(out.count) web=\(out.filter(\.web).count) timedOut=\(Date() >= deadline)")
         return out
     }
 
@@ -82,9 +87,75 @@ enum ElementScanner {
             let sub = v[1] as? String
             out.append(ScreenElement(ref: el, role: role, roleName: sub == "AXSearchField" ? "Search Field" : name,
                                      text: String(text.prefix(80)), frame: f.intersection(clip), web: inWeb))
+            if role == "AXTextArea", let screen = v[4] as? String { out += terminalItems(el, text: screen, frame: f) }
             if role != "AXRow" && role != "AXCell" && role != "AXGroup" { return }   // leaf-like controls
         }
         for k in kids { walk(k, clip: clip, depth: depth + 1, inRow: inRow || role == "AXRow", inWeb: inWeb, out: &out, visited: &visited, limit: limit, deadline: deadline) }
+    }
+
+    /// Chromium browsers (Brave, Chrome, Edge, Arc…) only expose a page's contents to accessibility once an assistive app
+    /// turns on `AXEnhancedUserInterface`, and forget it when they restart — without it only the toolbar is scannable.
+    /// Returns true when it was off (just turned on). Brave reports an error on the set but applies it anyway.
+    static func enableWebContent(_ app: AXUIElement, pid: pid_t) -> Bool {
+        guard isChromiumBrowser(pid), (value(app, enhancedUI) as Bool?) != true else { return false }
+        AXUIElementSetAttributeValue(app, enhancedUI as CFString, kCFBooleanTrue)
+        Debug.log("enabled web accessibility in pid \(pid)")
+        return true
+    }
+    /// Keeps it on in every Chromium browser: at launch, when one starts, and whenever one comes to the front — so the
+    /// page is already scannable when Learn opens (turning it on takes the browser ~2 s). Never turned off.
+    static func keepWebContentOn(_ app: NSRunningApplication) {
+        let pid = app.processIdentifier
+        guard isChromiumBrowser(pid) else { return }
+        DispatchQueue.global(qos: .utility).async {
+            let ax = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(ax, 0.5)
+            _ = enableWebContent(ax, pid: pid)
+        }
+    }
+    static func isChromiumBrowser(_ pid: pid_t) -> Bool {
+        guard let id = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier else { return false }
+        return chromiumBrowsers.contains(where: id.hasPrefix)
+    }
+    static let enhancedUI = "AXEnhancedUserInterface"
+    private static let chromiumBrowsers = ["com.google.Chrome", "com.brave.Browser", "com.microsoft.edgemac", "company.thebrowser.",
+                                           "com.vivaldi.Vivaldi", "com.operasoftware.Opera", "org.chromium.Chromium", "ai.perplexity.comet"]
+
+    /// A terminal (Ghostty…) shows TUI buttons (herdr's "new tab", "+", tab names) as plain text in one text area, and
+    /// can't say where a piece of text is. But a terminal is a grid: when every line has the same length, line = row
+    /// and character = column, so each piece's frame follows from where the cells sit (`TerminalGrid`). Pieces are runs
+    /// of text split at 2+ spaces and box-drawing lines; long sentences (program output) are left out. They're clicked for real.
+    private static func terminalItems(_ el: AXUIElement, text: String, frame f: CGRect) -> [ScreenElement] {
+        let lines = text.components(separatedBy: "\n")
+        guard lines.count >= 5, let cols = lines.first?.count, cols >= 20, lines.allSatisfy({ $0.count == cols }) else { return [] }
+        var pid: pid_t = 0
+        AXUIElementGetPid(el, &pid)
+        let grid = TerminalGrid.make(frame: f, rows: lines.count, cols: cols, pid: pid)
+        guard (4...40).contains(grid.cell.width), (8...80).contains(grid.cell.height) else { return [] }
+        let breaks: Set<Character> = ["│", "┃", "║", "─", "━", "═", "┌", "┐", "└", "┘", "├", "┤", "┬", "┴", "┼", "╭", "╮", "╰", "╯", "|"]
+        let bullets: Set<Character> = ["●", "○", "◉", "•", "⏺", "▸", "▶", "›", "»"]
+        var out: [ScreenElement] = []
+        for (row, line) in lines.enumerated() {
+            let chars = Array(line)
+            var col = 0
+            while col < chars.count, out.count < 400 {
+                // skip to the next piece
+                while col < chars.count, chars[col] == " " || breaks.contains(chars[col]) || bullets.contains(chars[col]) { col += 1 }
+                let start = col
+                var gap = 0
+                while col < chars.count, !breaks.contains(chars[col]) {
+                    gap = chars[col] == " " ? gap + 1 : 0
+                    if gap >= 2 { break }
+                    col += 1
+                }
+                let piece = String(chars[start..<col]).trimmingCharacters(in: .whitespaces)
+                guard !piece.isEmpty, piece.count <= 32, piece.split(separator: " ").count <= 4 else { continue }
+                out.append(ScreenElement(ref: el, role: "AXStaticText", roleName: "Text", text: piece,
+                                         frame: grid.frame(row: row, col: start, length: piece.count),
+                                         web: true))   // web = a real click at its centre, never an AX press
+            }
+        }
+        return out
     }
 
     /// Field name for search = what's visible: label + hint while empty (hint showing), label + typed value

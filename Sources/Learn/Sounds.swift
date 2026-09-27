@@ -1,10 +1,10 @@
 import AppKit
 
-/// Feedback sounds: one for clicks in Learn's UI, one for when Learn runs a shortcut. Chosen in Settings ▸ Sounds.
+/// Feedback: a sound and a trackpad tap for clicks in Learn's UI, and for when Learn runs a shortcut. Volume in Settings ▸ General.
 /// Learn's own sounds are synthesized here (no audio files); the rest are macOS's system sounds.
 enum SoundEffect: String, Codable, CaseIterable, Identifiable {
     case none
-    case tick, tap, pop, bubble, droplet, chime, thud                 // synthesized
+    case tick, tap, pop, bubble, droplet, chime, thud, coin           // synthesized
     case tink, sysPop, purr, bottle, morse, glass, ping, frog         // /System/Library/Sounds
 
     var id: Self { self }
@@ -18,6 +18,7 @@ enum SoundEffect: String, Codable, CaseIterable, Identifiable {
         case .droplet: "Droplet"
         case .chime: "Glass chime"
         case .thud: "Soft thud"
+        case .coin: "Coin"
         case .tink: "Tink"
         case .sysPop: "Pop (macOS)"
         case .purr: "Purr"
@@ -28,7 +29,7 @@ enum SoundEffect: String, Codable, CaseIterable, Identifiable {
         case .frog: "Frog"
         }
     }
-    static let learn: [SoundEffect] = [.tick, .tap, .pop, .bubble, .droplet, .chime, .thud]
+    static let learn: [SoundEffect] = [.tick, .tap, .pop, .bubble, .droplet, .chime, .thud, .coin]
     static let system: [SoundEffect] = [.tink, .sysPop, .purr, .bottle, .morse, .glass, .ping, .frog]
 }
 
@@ -46,6 +47,13 @@ enum Sounds {
             lastClick = now
         }
         play(kind == .click ? look.clickSound : look.shortcutSound, volume: look.soundVolume)
+        feel(kind == .click ? .generic : .levelChange)
+    }
+
+    /// A tap you feel on a Force Touch trackpad, alongside the sound (not tied to the volume, so it works when muted).
+    /// macOS only plays it while a finger is on the trackpad; a mouse has no haptics.
+    private static func feel(_ pattern: NSHapticFeedbackManager.FeedbackPattern) {
+        NSHapticFeedbackManager.defaultPerformer.perform(pattern, performanceTime: .now)
     }
 
     /// Soft detent while a slider is dragged: the click sound, quieter, at most every 35 ms.
@@ -54,6 +62,7 @@ enum Sounds {
         guard now - lastTick > 0.035, now - lastClick > 0.08 else { return }
         lastTick = now
         play(look.clickSound, volume: look.soundVolume * 0.45)
+        feel(.alignment)   // slider detents: a light tick under the finger
     }
 
     // MARK: App-wide feedback
@@ -155,6 +164,15 @@ enum Sounds {
             }
         case .thud:   // soft, low, muted
             return render(0.1) { t in sweep(t, from: 180, to: 90, over: 0.06) * env(t, attack: 0.002, decay: 0.03) }
+        case .coin:   // game coin pickup: a short B5, then a ringing E6 — square-ish (odd harmonics), softened
+            func square(_ f: Double, _ t: Double) -> Double {
+                (sin(2 * .pi * f * t) + sin(2 * .pi * 3 * f * t) / 3 + sin(2 * .pi * 5 * f * t) / 5 + sin(2 * .pi * 7 * f * t) / 7) / 1.4
+            }
+            let step = 0.075
+            return render(0.55) { t in
+                t < step ? square(987.77, t) * 0.55 * min(t / 0.002, 1)
+                         : square(1_318.51, t - step) * 0.55 * exp(-(t - step) / 0.16) * min((t - step) / 0.002, 1)
+            }
         default:
             return []
         }

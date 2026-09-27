@@ -3,16 +3,36 @@ import SwiftUI
 /// The Cleaner's 3D glass icons, drawn in code: a thick translucent body (a darker extrusion under a lit face,
 /// a rim catching light from the top, an inner shadow at the bottom) with a frosted-white glyph sitting on it.
 /// `mono` is the sidebar version: the same body in frosted white that picks up the background's color.
+/// `animating` is on while the area is being scanned: Smart Care's squeegee wipes the screen, Cleanup's disc rocks and
+/// tilts, and the others move gently in their own way (as CleanMyMac's icons do while they work).
 struct ModuleIcon: View {
     let module: CleanerModule
     var size: CGFloat = 220
     var mono = false
+    var animating = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
+        if animating && !reduceMotion {
+            TimelineView(.animation) { ctx in
+                icon(t: ctx.date.timeIntervalSinceReferenceDate)
+            }
+        } else {
+            icon(t: nil)
+        }
+    }
+
+    /// The icon at time `t` (nil: at rest).
+    private func icon(t: Double?) -> some View {
+        drawn(wipe: t.map { sin($0 * 2.4) })
+            .modifier(ScanMotion(module: module, t: t, size: size))
+    }
+
+    private func drawn(wipe: Double?) -> some View {
         let p = mono ? Palette.mono : module.palette
-        Group {
+        return Group {
             switch module {
-            case .smartCare: SmartCareIcon(size: size * 1.12, mono: mono)
+            case .smartCare: SmartCareIcon(size: size * 1.12, mono: mono, wipe: wipe)
             case .cleanup: CleanupIcon(size: size, p: p)
             case .protection: GlassBody(shape: RoundedPolygon(sides: 8, corner: 0.16, rotation: .pi / 8), size: size, p: p, depth: 0.07) {
                 Image(systemName: "hand.raised.fill").resizable().scaledToFit().frame(width: size * 0.42)
@@ -47,6 +67,36 @@ struct GlassSlab: View {
             Image(systemName: symbol).font(.system(size: size * 0.46, weight: .semibold)).foregroundStyle(p.glyph)
         }
         .frame(width: size, height: size)
+    }
+}
+
+/// How each area's icon moves while it's being scanned. Smart Care moves inside its drawing (the squeegee), so it stays put.
+private struct ScanMotion: ViewModifier {
+    let module: CleanerModule
+    let t: Double?
+    let size: CGFloat
+
+    func body(content: Content) -> some View {
+        let t = t ?? 0, on = self.t != nil
+        let s1 = sin(t * 2.2), c1 = cos(t * 2.2)
+        switch module {
+        case .cleanup:
+            // A robot vacuum working the floor: glides left and right, turning slightly into each pass.
+            let x = sin(t * 1.4)
+            content
+                .offset(x: on ? x * size * 0.12 : 0)
+                .rotationEffect(.degrees(on ? cos(t * 1.4) * 6 : 0))
+        case .protection:
+            content.scaleEffect(on ? 1 + 0.035 * s1 : 1).rotationEffect(.degrees(on ? 5 * sin(t * 1.3) : 0))
+        case .performance:
+            content.offset(y: on ? -size * 0.03 * abs(sin(t * 3)) : 0).rotationEffect(.degrees(on ? 3 * s1 : 0))
+        case .applications:
+            content.rotationEffect(.degrees(on ? 7 * sin(t * 1.6) : 0)).offset(y: on ? size * 0.015 * c1 : 0)
+        case .clutter:
+            content.scaleEffect(x: on ? 1 + 0.03 * s1 : 1, y: on ? 1 - 0.03 * s1 : 1)
+        case .smartCare:
+            content
+        }
     }
 }
 
@@ -262,7 +312,10 @@ private struct FolderShape: Shape {
 private struct SmartCareIcon: View {
     let size: CGFloat
     var mono = false
+    var wipe: Double? = nil   // -1…1 across the screen while scanning; nil = resting pose
     var body: some View {
+        let w = wipe ?? 0.3                      // resting pose ≈ the drawing's original squeegee spot
+        let screen = RoundedRectangle(cornerRadius: size * 0.07, style: .continuous)
         let pink = LinearGradient(colors: [Color(hex: 0xFF9BDD), Color(hex: 0xF04FB8), Color(hex: 0xC0288E)], startPoint: .top, endPoint: .bottom)
         let silver = LinearGradient(colors: [Color(white: 0.95), Color(white: 0.7)], startPoint: .top, endPoint: .bottom)
         ZStack {
@@ -283,9 +336,21 @@ private struct SmartCareIcon: View {
             // Chin.
             RoundedRectangle(cornerRadius: size * 0.03, style: .continuous).fill(Color(hex: 0xFFC6EC).opacity(0.9))
                 .frame(width: size * 0.74, height: size * 0.07).offset(y: size * 0.17)
-            // Squeegee sweeping the screen.
+            // A freshly wiped streak on the glass, just behind the squeegee.
+            if wipe != nil {
+                LinearGradient(colors: [.clear, .white.opacity(0.35), .clear], startPoint: .leading, endPoint: .trailing)
+                    .frame(width: size * 0.22, height: size * 0.7)
+                    .rotationEffect(.degrees(-38 + 10 * (w - 0.3)))
+                    .offset(x: size * 0.3 * w - size * 0.06, y: -size * 0.02)
+                    .frame(width: size * 0.8, height: size * 0.5)
+                    .mask(screen.frame(width: size * 0.8, height: size * 0.5))
+                    .offset(y: -size * 0.02)
+                    .allowsHitTesting(false)
+            }
+            // Squeegee sweeping the screen: side to side while scanning, leaning into each stroke.
             Capsule().fill(silver).frame(width: size * 0.05, height: size * 0.46)
-                .rotationEffect(.degrees(-38)).offset(x: size * 0.12, y: -size * 0.12)
+                .rotationEffect(.degrees(-38 + 10 * (w - 0.3)))
+                .offset(x: size * 0.3 * w + size * 0.03, y: -size * 0.12 + (abs(w) - 0.3) * size * 0.02)
                 .shadow(color: .black.opacity(0.3), radius: size * 0.02, x: size * 0.01, y: size * 0.02)
         }
         .saturation(mono ? 0.9 : 1)

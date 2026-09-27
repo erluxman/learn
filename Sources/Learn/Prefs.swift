@@ -8,13 +8,11 @@ final class Prefs: ObservableObject {
     static let defaultPanelKey = Binding(path: [LearnActions.group, "Open Learn"], keyCode: kVK_Space, mods: [.opt])
     // Keys inside Learn's panel
     static let defaultRecordKey = Binding(path: ["Panel", "Record shortcut"], keyCode: kVK_Return, mods: [.cmd])
-    static let defaultContextKey = Binding(path: ["Panel", "Right-click"], keyCode: kVK_Tab, mods: [])
 
     private let d = UserDefaults.standard
 
     @Published var panelKey: Binding { didSet { save(panelKey, "panelKey"); notify() } }
     @Published var recordKey: Binding { didSet { save(recordKey, "recordKey") } }
-    @Published var contextKey: Binding { didSet { save(contextKey, "contextKey") } }
     @Published var rescanMinutes: Int { didSet { d.set(rescanMinutes, forKey: "rescanMinutes") } }
     @Published var showScreenItems: Bool { didSet { d.set(showScreenItems, forKey: "showScreenItems") } }
     @Published var showMenuCommands: Bool { didSet { d.set(showMenuCommands, forKey: "showMenuCommands") } }
@@ -32,7 +30,6 @@ final class Prefs: ObservableObject {
         d.register(defaults: ["rescanMinutes": 10, "showScreenItems": true, "showMenuCommands": true, "debugLog": false, "showKeyHUD": true, "searchFiles": true, "quickAnswers": true, "chordRightClick": true])
         panelKey = Self.load("panelKey", Self.defaultPanelKey)
         recordKey = Self.load("recordKey", Self.defaultRecordKey)
-        contextKey = Self.load("contextKey", Self.defaultContextKey)
         rescanMinutes = d.integer(forKey: "rescanMinutes")
         showScreenItems = d.bool(forKey: "showScreenItems")
         showMenuCommands = d.bool(forKey: "showMenuCommands")

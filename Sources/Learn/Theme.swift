@@ -40,13 +40,8 @@ extension View {
         styledGlassButton(prominent: prominent).simultaneousGesture(TapGesture().onEnded { Sounds.play(.click) })
     }
 
-    @ViewBuilder
     private func styledGlassButton(prominent: Bool) -> some View {
-        if #available(macOS 26, *) {
-            if prominent { buttonStyle(.glassProminent) } else { buttonStyle(.glass) }
-        } else {
-            if prominent { buttonStyle(.borderedProminent) } else { buttonStyle(.bordered) }
-        }
+        buttonStyle(GelButtonStyle(prominent: prominent))
     }
 
     /// Soft detent clicks while `value` is dragged across `range` (every 1/20th of it).
@@ -55,10 +50,6 @@ extension View {
         return onChange(of: Int(((value - range.lowerBound) / span * 20).rounded())) { Sounds.tick() }
     }
 
-    /// Glass surface lights up where the pointer is: a soft glow inside and a brighter rim near the cursor.
-    func pointerLight<S: InsettableShape>(_ shape: S, strength: Double = 1, radius: CGFloat = 140) -> some View {
-        modifier(PointerLight(shape: shape, strength: strength, radius: radius))
-    }
 }
 
 private struct GlassSurface<S: Shape>: ViewModifier {
@@ -133,53 +124,6 @@ struct GlassGroup<Content: View>: View {
     }
 }
 
-// MARK: Pointer light
-
-/// The specular part of glass: glow + rim highlight centred on `point` (view coordinates).
-private struct Specular<S: InsettableShape>: View {
-    let shape: S
-    let point: CGPoint
-    let strength: Double
-    let radius: CGFloat
-    @Environment(\.appearance) private var look
-    var body: some View {
-        let strength = strength * look.light
-        GeometryReader { g in
-            let c = UnitPoint(x: point.x / max(g.size.width, 1), y: point.y / max(g.size.height, 1))
-            ZStack {
-                RadialGradient(colors: [.white.opacity(0.14 * strength), .white.opacity(0)], center: c, startRadius: 0, endRadius: radius)
-                shape.strokeBorder(RadialGradient(colors: [.white.opacity(0.75 * strength), .white.opacity(0)],
-                                                  center: c, startRadius: 0, endRadius: radius * 1.2), lineWidth: 1.1)
-            }
-            .blendMode(.plusLighter)
-            .clipShape(shape)
-        }
-        .allowsHitTesting(false)
-    }
-}
-
-private struct PointerLight<S: InsettableShape>: ViewModifier {
-    let shape: S
-    let strength: Double
-    let radius: CGFloat
-    @State private var point = CGPoint.zero
-    @State private var lit = false
-
-    func body(content: Content) -> some View {
-        content
-            .overlay { Specular(shape: shape, point: point, strength: strength, radius: radius).opacity(lit ? 1 : 0) }
-            .onContinuousHover { phase in
-                switch phase {
-                case .active(let p):
-                    if !lit { point = p; withAnimation(.easeOut(duration: 0.25)) { lit = true } }
-                    else { withAnimation(.interactiveSpring(response: 0.18, dampingFraction: 0.9)) { point = p } }
-                case .ended:
-                    withAnimation(.easeOut(duration: 0.4)) { lit = false }
-                }
-            }
-    }
-}
-
 // MARK: Liquid button
 
 /// Glass button that behaves like liquid: swells on hover, its content leans toward the pointer,
@@ -225,7 +169,6 @@ private struct LiquidButton<Label: View, S: InsettableShape>: View {
             .contentShape(shape)
             .liquidGlass(in: shape, tint: tint, interactive: true)
             .glassID(glassID, in: namespace)
-            .overlay { if let point { Specular(shape: shape, point: point, strength: pressed ? 1.6 : 1, radius: max(size.width, 40)) } }
             .background(GeometryReader { g in Color.clear.onAppear { size = g.size }.onChange(of: g.size) { _, s in size = s } })
             .scaleEffect(x: pressed ? 0.93 : hovering && look.hoverMotion ? 1.05 : 1, y: pressed ? 0.9 : hovering && look.hoverMotion ? 1.05 : 1)
             .brightness(pressed ? 0.05 : 0)
@@ -665,5 +608,74 @@ enum IconColor {
         var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0, al: CGFloat = 0
         avg.getHue(&h, saturation: &s, brightness: &v, alpha: &al)
         return NSColor(hue: h, saturation: max(s, 0.5), brightness: max(v, 0.75), alpha: 1)
+    }
+}
+
+// MARK: Gel buttons
+
+/// Learn's buttons, in the same recipe as the icon tiles and keycaps: a two-tone diagonal gradient of `color` (the
+/// "Record a shortcut" pink → orange by default), a glossy highlight over the top half, a bright rim along the top edge
+/// and a soft glow of the same color that swells on hover and tucks in when pressed.
+/// `prominent` is the full gradient; otherwise the same gradient is laid thin over the glass, with a gradient rim.
+struct GelButtonStyle: ButtonStyle {
+    var prominent = false
+    var color: Color = .red
+    func makeBody(configuration: Configuration) -> some View {
+        GelButton(configuration: configuration, prominent: prominent, color: color)
+    }
+}
+
+private struct GelButton: View {
+    let configuration: ButtonStyle.Configuration
+    let prominent: Bool
+    let color: Color
+    @State private var hover = false
+    @Environment(\.isEnabled) private var enabled
+    @Environment(\.appearance) private var look
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let pressed = configuration.isPressed
+        let lift = hover && enabled && look.hoverMotion && !reduceMotion
+        let from = IconTile.shift(color, hue: -0.06, brightness: lift ? 0.18 : 0.12)
+        let to = IconTile.shift(color, hue: 0.07, brightness: lift ? -0.02 : -0.08)
+        let fill = LinearGradient(colors: [from, to], startPoint: .topLeading, endPoint: .bottomTrailing)
+        configuration.label
+            .font(.app(12.5, .semibold))
+            .foregroundStyle(.white)
+            .shadow(color: .black.opacity(prominent ? 0.25 : 0.15), radius: 0.5, y: 0.5)
+            .padding(.horizontal, 14).padding(.vertical, 6)
+            .frame(minHeight: 28)
+            .background {
+                ZStack {
+                    if prominent {
+                        Capsule().fill(fill)
+                    } else {
+                        Capsule().fill(.white.opacity(0.08))
+                        Capsule().fill(fill).opacity(lift ? 0.4 : 0.28)
+                    }
+                    // Gloss: light pooled in the top half.
+                    Capsule().fill(LinearGradient(colors: [.white.opacity(prominent ? 0.32 : 0.18), .white.opacity(0)],
+                                                  startPoint: .top, endPoint: .center))
+                        .padding(1.5)
+                    // Rim: bright along the top, fading down (in the gradient's own colors on the soft button).
+                    if prominent {
+                        Capsule().strokeBorder(LinearGradient(colors: [.white.opacity(0.6), .white.opacity(0.08)], startPoint: .top, endPoint: .bottom),
+                                               lineWidth: 0.8)
+                    } else {
+                        Capsule().strokeBorder(LinearGradient(colors: [from.opacity(0.9), to.opacity(0.5)], startPoint: .topLeading, endPoint: .bottomTrailing),
+                                               lineWidth: 1)
+                    }
+                    if pressed { Capsule().fill(.black.opacity(0.12)) }
+                }
+                .shadow(color: color.opacity(prominent ? (pressed ? 0.2 : lift ? 0.5 : 0.35) : (lift ? 0.25 : 0.12)),
+                        radius: pressed ? 3 : lift ? 10 : 6, y: pressed ? 1 : lift ? 4 : 3)
+            }
+            .contentShape(Capsule())
+            .scaleEffect(pressed ? 0.96 : lift ? 1.03 : 1)
+            .opacity(enabled ? 1 : 0.45)
+            .animation(.spring(response: 0.25, dampingFraction: 0.7), value: pressed)
+            .animation(.spring(response: 0.3, dampingFraction: 0.75), value: lift)
+            .onHover { hover = $0 }
     }
 }

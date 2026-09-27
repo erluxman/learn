@@ -24,8 +24,8 @@ struct HUDStyle: Codable, Hashable {
     var bold = false                  // Spotlight's text is regular weight
     var keySize = 26.0                // Spotlight's search text
     var captionSize = 15.0            // Spotlight's subtitles
-    var showCaption = true            // the command name under the keys
-    var textColor = RGBA(.white)
+    var showCaption: Bool { false }   // keys only; the command name is no longer shown (or a setting)
+    var textColor: RGBA { RGBA(.white) }
     var background = RGBA(NSColor(white: 0.1, alpha: 0.55))
     var frosted = true                // before `backdrop` existed: blur what's behind, tinted by `background`
     var backdrop: Backdrop? = .spotlight // nil in styles saved before it existed → derived from `frosted`
@@ -37,10 +37,8 @@ struct HUDStyle: Codable, Hashable {
     var motion = Motion.jelly
     var animationSpeed = 0.25         // seconds
 
-    var box: Backdrop {
-        get { backdrop ?? (frosted ? .frosted : .solid) }
-        set { backdrop = newValue }
-    }
+    /// Always Spotlight's dark Liquid Glass at its own defaults; older saved backdrops and their looks are ignored.
+    var box: Backdrop { .spotlight }
 
     /// One backdrop's own settings. Each backdrop starts from its defaults and remembers your changes until reset.
     struct BoxLook: Codable, Hashable {
@@ -66,7 +64,7 @@ struct HUDStyle: Codable, Hashable {
     func look(_ b: Backdrop) -> BoxLook { boxLooks?[b.rawValue] ?? defaultLook(b) }
     mutating func setLook(_ l: BoxLook, for b: Backdrop) { boxLooks = (boxLooks ?? [:]).merging([b.rawValue: l]) { $1 } }
     mutating func resetLook(_ b: Backdrop) { boxLooks?[b.rawValue] = nil }
-    var current: BoxLook { look(box) }
+    var current: BoxLook { defaultLook(.spotlight) }
 
     func keyFont() -> NSFont { Self.font(font, size: keySize, bold: bold) }
     func captionFont() -> NSFont { Self.font(font, size: captionSize, bold: false) }

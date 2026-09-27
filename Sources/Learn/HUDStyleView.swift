@@ -28,20 +28,8 @@ struct HUDStyleSections: View {
             }
             Toggle("Bold keys", isOn: style.bold)
             slider("Key size", style.keySize, 12...96, "%.0f pt")
-            Toggle("Show command name", isOn: style.showCaption)
-            slider("Command name size", style.captionSize, 8...40, "%.0f pt").disabled(!prefs.hudStyle.showCaption)
-            ColorPicker("Text color", selection: color(\.textColor), supportsOpacity: true)
         }
         Section("Box") {
-            Picker("Background", selection: style.box) {
-                Text("Spotlight").tag(HUDStyle.Backdrop.spotlight)
-                Text("Solid").tag(HUDStyle.Backdrop.solid)
-                Text("Clear glass").tag(HUDStyle.Backdrop.glass)
-                Text("Colored glass").tag(HUDStyle.Backdrop.tinted)
-                Text("Blurred").tag(HUDStyle.Backdrop.frosted)
-            }
-            .pickerStyle(.segmented)
-            boxControls
             slider("Rounded corners", style.cornerRadius, 0...40, "%.0f pt")
             slider("Padding left/right", style.paddingH, 0...80, "%.0f pt")
             slider("Padding top/bottom", style.paddingV, 0...60, "%.0f pt")
@@ -65,53 +53,6 @@ struct HUDStyleSections: View {
                     .disabled(prefs.hudStyle == HUDStyle())
             }
         }
-    }
-
-    // MARK: Per-backdrop settings
-
-    /// The current backdrop's own controls; they edit only that backdrop's saved look.
-    @ViewBuilder
-    private var boxControls: some View {
-        let b = prefs.hudStyle.box
-        let look = SwiftUI.Binding(get: { prefs.hudStyle.look(b) }, set: { prefs.hudStyle.setLook($0, for: b) })
-        switch b {
-        case .solid:
-            ColorPicker("Color", selection: lookColor(look), supportsOpacity: false)
-            slider("Opacity", look.opacity, 0...1, "%.0f%%", percent: true)
-        case .spotlight, .glass:
-            slider("Darken", look.darken, 0...0.9, "%.0f%%", percent: true)
-        case .tinted:
-            ColorPicker("Glass color", selection: lookColor(look), supportsOpacity: false)
-            slider("Intensity", look.opacity, 0...1, "%.0f%%", percent: true)
-        case .frosted:
-            Picker("Blur", selection: look.material) {
-                Section("Adjustable blur") { ForEach(BlurStyle.tunable) { Text($0.title).tag($0) } }
-                Section("Behind window") { ForEach(BlurStyle.appKit) { Text($0.title).tag($0) } }
-            }
-            if look.wrappedValue.material.isTunable {
-                slider("Blur radius", SwiftUI.Binding(get: { look.wrappedValue.blur * HUDStyle.maxBlurRadius },
-                                                      set: { look.wrappedValue.blur = $0 / HUDStyle.maxBlurRadius }),
-                       0...HUDStyle.maxBlurRadius, "%.1f pt")
-            } else {
-                slider("Blur amount", look.blur, 0...1, "%.0f%%", percent: true)
-            }
-            ColorPicker("Tint", selection: lookColor(look), supportsOpacity: false)
-            slider("Tint opacity", look.opacity, 0...1, "%.0f%%", percent: true)
-        }
-        slider("Shine", look.shine, 0...1, "%.0f%%", percent: true)
-        HStack {
-            Spacer()
-            Button("Reset \(Self.name(b))") { withAnimation(Theme.smooth) { prefs.hudStyle.resetLook(b) } }
-                .disabled(prefs.hudStyle.look(b) == prefs.hudStyle.defaultLook(b))
-        }
-    }
-
-    static func name(_ b: HUDStyle.Backdrop) -> String {
-        switch b { case .spotlight: "Spotlight"; case .solid: "Solid"; case .glass: "Clear glass"; case .tinted: "Colored glass"; case .frosted: "Blurred" }
-    }
-
-    private func lookColor(_ look: SwiftUI.Binding<HUDStyle.BoxLook>) -> SwiftUI.Binding<Color> {
-        SwiftUI.Binding(get: { Color(nsColor: look.wrappedValue.color.ns) }, set: { look.wrappedValue.color = HUDStyle.RGBA(NSColor($0)) })
     }
 
     // MARK: Preview
@@ -190,10 +131,6 @@ struct HUDStyleSections: View {
         }
     }
 
-    private func color(_ key: WritableKeyPath<HUDStyle, HUDStyle.RGBA>) -> SwiftUI.Binding<Color> {
-        SwiftUI.Binding(get: { Color(nsColor: prefs.hudStyle[keyPath: key].ns) },
-                        set: { prefs.hudStyle[keyPath: key] = HUDStyle.RGBA(NSColor($0)) })
-    }
 }
 
 /// The box as the real bubble draws it, from the current backdrop's own look.

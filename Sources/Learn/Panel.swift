@@ -35,7 +35,8 @@ final class Panel: NSPanel, NSWindowDelegate {
         setFrameOrigin(origin)
         let entering = !isVisible
         if entering { alphaValue = 0 }   // SwiftUI springs the glass in; the window only fades
-        NSApp.activate(ignoringOtherApps: true)
+        // Like Spotlight: the panel takes the keyboard without activating Learn, so the app you were in stays
+        // frontmost and its menu bar stays there and usable (Learn has no menus of its own to show).
         makeKeyAndOrderFront(nil)
         guard entering else { return }
         NSAnimationContext.runAnimationGroup { ctx in
@@ -55,6 +56,8 @@ final class Panel: NSPanel, NSWindowDelegate {
         let wasVisible = isVisible
         orderOut(nil)
         onDismiss()
+        // Cancelled (⎋, hotkey again): Ghostty's quick terminal comes back if the panel hid it. Clicked away: it stays gone.
+        if restoreFocus && wasVisible { QuickTerminal.restore() } else { QuickTerminal.forget() }
         guard restoreFocus, wasVisible, NSApp.isActive else { return }
         if let app = returnTo, !app.isTerminated {
             NSApp.yieldActivation(to: app)
@@ -71,7 +74,8 @@ final class Panel: NSPanel, NSWindowDelegate {
         guard Scanner.holdingFocus > 0 else { return dismiss(restoreFocus: false) }   // user clicked elsewhere: don't steal it back
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
             guard let self, self.isVisible else { return }
-            NSApp.activate(ignoringOtherApps: true)
+            // Give the menu bar back to the app you were in, then take the keyboard again (without activating Learn).
+            if let app = self.returnTo, !app.isTerminated, !app.isActive { app.activate() }
             self.makeKeyAndOrderFront(nil)
         }
     }

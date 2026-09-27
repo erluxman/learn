@@ -24,17 +24,16 @@ final class SearchModel: ObservableObject {
                                         url: Bundle.main.bundleURL)
     static let settingsGroup = SettingsWindow.title
     private static let settingsIndex: [(String, SettingsWindow.Tab)] = [
-        ("Permissions", .permissions), ("Accessibility permission", .permissions), ("Send keystrokes & clicks permission", .permissions),
+        ("General", .permissions), ("Permissions", .permissions), ("Cleaner: clean up, protect, speed up your Mac", .permissions), ("Accessibility permission", .permissions), ("Send keystrokes & clicks permission", .permissions),
         ("Input Monitoring permission", .permissions), ("Launch at login", .permissions),
-        ("Appearance", .appearance), ("Blur: liquid glass, gaussian radius, vibrant, frosted, progressive, materials", .appearance), ("Grain / noise texture: fine, blue noise, film, fractal, paper, halftone", .appearance), ("Theme: colors, gradient, presets, grain", .appearance), ("Tint color of the glass", .appearance),
-        ("Corner roundness", .appearance), ("Window shadow", .appearance), ("Pointer light", .appearance),
-        ("Jelly wobble when dragging windows", .appearance), ("Hover motion", .appearance), ("App font, typeface", .appearance), ("Icon style", .appearance),
-        ("Sounds", .sounds), ("Click sound", .sounds), ("Shortcut sound", .sounds), ("Sound volume", .sounds),
+        ("Appearance", .appearance), ("Surface: colorful gradient or liquid glass", .appearance),
+        ("Glass color and intensity", .appearance), ("Jelly wobble when dragging windows", .appearance),
+        ("Sounds", .permissions), ("Sound volume", .permissions),
         ("Hotkeys", .hotkeys), ("Open Learn hotkey", .hotkeys), ("Replace Spotlight (⌘Space opens Learn)", .hotkeys), ("Label clickable items hotkey", .hotkeys),
         ("Right-click the focused item hotkey", .hotkeys), ("Open Learn Settings hotkey", .hotkeys),
         ("Pointer mode hotkey (control the pointer with the keyboard)", .hotkeys), ("Move window to next screen hotkey", .hotkeys),
-        ("Learn Panel", .panel), ("Record-shortcut key (inside Learn)", .panel), ("Right-click key (inside Learn)", .panel),
-        ("On Screen", .display), ("Shortcut display: customize look, position, font, color, animation", .display),
+        ("Learn Panel keys", .hotkeys), ("Record-shortcut key (inside Learn)", .hotkeys), ("Right-click key (inside Learn)", .hotkeys),
+        ("On Screen", .display), ("Shortcut bubble: position, size, animation", .display),
         ("Right-click with both control keys", .display), ("Pointer mode", .display),
         ("Search", .search), ("Show on-screen items", .search), ("Search files (Spotlight index)", .search),
         ("Quick answers: calculator, unit conversions, definitions", .search), ("Show menu commands without a shortcut", .search),
@@ -47,9 +46,11 @@ final class SearchModel: ObservableObject {
     }
     private static let settingsTabs = Dictionary(settingsIndex.map { ([settingsGroup, $0.1.title, $0.0], $0.1) }, uniquingKeysWith: { a, _ in a })
 
-    @Published var mode: Mode = .apps
-    /// ⇥ with nothing typed inside an app: the most relevant shortcuts instead of the most used.
+    @Published var mode: Mode = .apps { didSet { screenOnly = false } }
+    /// ⇧⇥ with nothing typed inside an app: the most relevant shortcuts instead of the most used.
     @Published private(set) var suggesting = false
+    /// ⇥ with nothing typed inside an app: search only what's on screen (buttons, links, text) — no shortcuts, no other apps.
+    @Published private(set) var screenOnly = false
 
     @Published var query = "" {
         didSet {
@@ -57,7 +58,7 @@ final class SearchModel: ObservableObject {
             suggesting = false
             notice = nil
             files = []
-            fileSearch.search(Prefs.shared.searchFiles && currentApp != Self.settingsEntry ? query : "")
+            fileSearch.cancel()   // started by recompute only when almost nothing else matched
             searchGlobal()
             recompute()
         }
@@ -142,7 +143,7 @@ final class SearchModel: ObservableObject {
             scanScreen(appID: Self.settingsEntry.id, pid: getpid(), windowTitle: SettingsWindow.title)
             open(Self.settingsEntry)
         } else if let f = frontmost, let id = f.bundleIdentifier, let url = f.bundleURL {
-            if Prefs.shared.showScreenItems { scanScreen(appID: id, pid: f.processIdentifier) }
+            if Prefs.shared.showScreenItems { scanScreen(appID: id, pid: f.processIdentifier, window: QuickTerminal.window) }
             open(allApps.first { $0.id == id } ?? AppEntry(id: id, name: f.localizedName ?? id, url: url))
         } else {
             mode = .apps
@@ -162,26 +163,55 @@ final class SearchModel: ObservableObject {
     }
 
     func recompute(keepSelection: Bool = false) {
-        if let app = currentApp {
+        if screenOnly, let app = currentApp {
+            let onScreen = screen.appID == app.id ? screenRows : []
+            let ranked = query.isEmpty ? onScreen
+                : onScreen.compactMap { s in Fuzzy.rank(query, title: s.title, context: s.searchText).map { (s, $0) } }
+                    .sorted { ($0.1, -$0.0.title.count) > ($1.1, -$1.0.title.count) }.map(\.0)
+            results = ranked.map(Hit.shortcut)
+            info = "\(onScreen.count) on screen"
+        } else if let app = currentApp {
             let entry = ShortcutStore.shared.get(app.id)
             // Learn's own commands only appear when searched for — the list itself is just this app.
             let learn = query.isEmpty ? [] : (LearnActions.all + WindowMover.paths).map { Shortcut(path: $0, key: "", keyCode: nil, mods: []) }
             let onScreen = screen.appID == app.id ? screenRows : []
-            let menus = (entry?.shortcuts ?? []).filter { Prefs.shared.showMenuCommands || $0.hasKey }
+            let menus = (entry?.shortcuts ?? []).filter { Prefs.shared.showMenuCommands || $0.hasKey || Self.documentKind($0) != nil }
             let list = app == Self.settingsEntry ? Self.settingsRows + onScreen
                                                   : Self.withBindings(learn + onScreen + menus, app: app.id)
-            let shortcuts = query.isEmpty ? list
+            let scored = query.isEmpty ? list.map { ($0, 0) }
                 : list.compactMap { s in Fuzzy.rank(query, title: s.title, context: s.searchText, keys: s.display).map { (s, $0) } }
                     .sorted { ($0.1, -$0.0.title.count, -$0.0.path.count) > ($1.1, -$1.0.title.count, -$1.0.path.count) }
-                    .map(\.0)
-            // Anywhere, not just the top level: answer on top; definition, apps and files after this app's items.
-            let (top, rest) = app == Self.settingsEntry ? ([], []) : extras(apps: rankedApps().filter { Fuzzy.rank(query, title: $0.name) ?? 0 >= 6_000 }.prefix(5), files: 12)
-            let elsewhere = app == Self.settingsEntry ? [] : globalHits(excluding: app.id, limit: 8)
+            let shortcuts = scored.map(\.0)
+            let outside = app == Self.settingsEntry
             // Nothing typed: only the shortcuts you use most here (⇥: the most relevant ones); typing searches all of them.
-            let browsing = query.isEmpty && app != Self.settingsEntry
-            let picked = !browsing ? [] : suggesting ? RelevanceStore.shared.suggestions(menus, app: app.id, limit: 12)
-                                                     : UsageStore.shared.top(shortcuts, app: app.id, limit: 8)
-            results = top + (browsing ? picked : shortcuts).map(Hit.shortcut) + elsewhere + rest
+            if query.isEmpty && !outside {
+                let picked = suggesting ? RelevanceStore.shared.suggestions(menus, app: app.id, limit: 12)
+                                        : UsageStore.shared.top(shortcuts.filter { Self.documentKind($0) == nil }, app: app.id, limit: 8)
+                results = picked.map(Hit.shortcut)
+            } else if outside && query.isEmpty {
+                results = shortcuts.map(Hit.shortcut)   // Learn's settings, listed
+            } else {
+                // Searching from Learn's Settings works like any app: its settings first, then apps, answers and the rest.
+                let kinds = scored.map { ($0.0, $0.1, Self.documentKind($0.0)) }
+                // 2nd: this app's commands, apps named like the query ("vs code" → VS Code), system shortcuts.
+                let own = kinds.filter { $0.2 == nil }.map { (Hit.shortcut($0.0), $0.1) }
+                let apps = rankedApps().filter { $0 != app }.compactMap { a in Fuzzy.rank(query, title: a.name).map { (Hit.app(a), $0) } }
+                    .filter { $0.1 >= 6_000 }.prefix(5)
+                let system = globalFound.filter(\.system).map { ($0.hit, $0.rank) }
+                let second = (own + apps + system).enumerated()
+                    .sorted { ($0.element.1, -$0.offset) > ($1.element.1, -$1.offset) }.map(\.element)   // ties: this app first
+                // 3rd: other apps' shortcuts and bookmarks (this app's bookmarks too), held below the top rows.
+                let foreign = (globalFound.filter { !$0.system && $0.app != app.id && ($0.kind == nil || $0.kind == .bookmark) }
+                                   .prefix(10).map { ($0.hit, $0.rank) }
+                               + kinds.filter { $0.2 == .bookmark }.map { (Hit.shortcut($0.0), $0.1) })
+                    .sorted { $0.1 > $1.1 }
+                let (top, def) = answers()
+                // Then this app's tabs and windows; then history, recent files and other apps' windows; files last.
+                let mine = kinds.filter { $0.2 == .tab || $0.2 == .window }.map { Hit.shortcut($0.0) }
+                let low = kinds.filter { $0.2 == .history || $0.2 == .recent }.map { Hit.shortcut($0.0) }
+                    + globalFound.filter { $0.app != app.id && [.window, .history, .recent].contains($0.kind) }.prefix(8).map(\.hit)
+                results = top + Self.merge(second, filler: def + mine, foreign: foreign, start: top.count) + low
+            }
             scanning = Scanner.shared.busy.contains(app.id) && !quietScans.contains(app.id)
             if scanning { info = "Scanning \(app.name)…" }
             else if app == Self.settingsEntry { info = "Search Learn's settings · ↩ go there" }
@@ -192,26 +222,67 @@ final class SearchModel: ObservableObject {
             } else { info = "No shortcuts found — press ⌘R to scan" }
         } else {
             let apps = rankedApps()
-            let (top, rest) = extras(apps: [], files: 40)
-            let global = globalHits(excluding: nil, limit: 25)
-            // Apps named like the query first, then every app's matching shortcuts, then looser app matches.
-            let strong = query.isEmpty ? apps : apps.filter { Fuzzy.rank(query, title: $0.name) ?? 0 >= 6_000 }
-            let weak = query.isEmpty ? [] : apps.filter { Fuzzy.rank(query, title: $0.name) ?? 0 < 6_000 }
+            let (top, def) = answers()
+            let named = apps.compactMap { a in Fuzzy.rank(query, title: a.name).map { (a, $0) } }
             // Like Spotlight: nothing typed, nothing listed — the panel is just the search field.
             // "settings", "prefs", "learn set…": Learn's own settings come first, ahead of System Settings and the rest.
             let own = !query.isEmpty && [SettingsWindow.title, "Settings", "Preferences", "Learn Preferences"]
                 .contains { Fuzzy.rank(query, title: $0) ?? 0 >= 6_000 }
-            let mine = own ? [Hit.app(Self.settingsEntry)] : []
-            results = query.isEmpty ? [] : mine + top + strong.filter { $0 != Self.settingsEntry }.map(Hit.app) + global + weak.map(Hit.app) + rest
+            let mine: [(Hit, Int)] = own ? [(Hit.app(Self.settingsEntry), Int.max)] : []
+            // 2nd: apps named like the query and system shortcuts; 3rd: every app's shortcuts and bookmarks, held
+            // below the top rows; then looser app matches and a definition; history, recent files and windows low.
+            let second = mine + (named.filter { $0.1 >= 6_000 && $0.0 != Self.settingsEntry }.map { (Hit.app($0.0), $0.1) }
+                                 + globalFound.filter(\.system).map { ($0.hit, $0.rank) }).sorted { $0.1 > $1.1 }
+            let foreign = globalFound.filter { !$0.system && ($0.kind == nil || $0.kind == .bookmark) }.prefix(25).map { ($0.hit, $0.rank) }
+            let weak = named.filter { $0.1 < 6_000 }.map { Hit.app($0.0) }
+            let low = globalFound.filter { [.window, .history, .recent].contains($0.kind) }.prefix(8).map(\.hit)
+            results = query.isEmpty ? [] : top + Self.merge(second, filler: weak + def, foreign: foreign, start: top.count) + low
+            let global = globalFound
             info = "\(apps.count) apps\(global.isEmpty ? "" : " · \(global.count) shortcuts")\(files.isEmpty ? "" : " · \(files.count) files")"
+        }
+        // Files on disk only when almost nothing else matched (a Spotlight query is the costliest part of a search).
+        if Prefs.shared.searchFiles, !screenOnly, !query.isEmpty, globalSettled, results.count < 2 {
+            fileSearch.search(query)
+            results += files.prefix(40).map(Hit.file)
         }
         if !keepSelection || selection >= count { selection = 0 }
         updateHighlight()
     }
 
-    /// ⇥ with nothing typed in an app: switch between frequently used and suggested. Returns false when it doesn't apply.
+    /// `own` rows in score order with `foreign` ones (other apps' shortcuts) merged in by score — but never in the
+    /// first two rows, and only from the 3rd row with a strong match (the query starts the name or one of its
+    /// words), otherwise not above the 8th. `filler` (lower sections) fills rows until foreign ones may go there.
+    private static func merge(_ own: [(Hit, Int)], filler: [Hit], foreign: [(Hit, Int)], start: Int) -> [Hit] {
+        let ownRows = own + filler.map { ($0, Int.min) }
+        var out: [Hit] = [], i = 0, j = 0
+        while i < ownRows.count || j < foreign.count {
+            if j < foreign.count {
+                let (hit, rank) = foreign[j]
+                let floor = rank >= 8_000 ? 2 : 7
+                if i >= ownRows.count || (start + out.count >= floor && rank > ownRows[i].1) {
+                    out.append(hit); j += 1; continue
+                }
+            }
+            out.append(ownRows[i].0); i += 1
+        }
+        return out
+    }
+
+    /// ⇥ with nothing typed in an app: search only its on-screen items (⎋ / ⌫ go back). False when it doesn't apply.
+    func enterScreenOnly() -> Bool {
+        guard query.isEmpty, !screenOnly, let app = currentApp else { return false }
+        if screen.appID != app.id, let running = app.runningApp {   // not scanned yet (setting off, or drilled in)
+            scanScreen(appID: app.id, pid: running.processIdentifier)
+        }
+        screenOnly = true
+        suggesting = false
+        recompute()
+        return true
+    }
+
+    /// ⇧⇥ with nothing typed in an app: switch between frequently used and suggested. Returns false when it doesn't apply.
     func toggleSuggestions() -> Bool {
-        guard query.isEmpty, let app = currentApp, app != Self.settingsEntry else { return false }
+        guard query.isEmpty, !screenOnly, let app = currentApp, app != Self.settingsEntry else { return false }
         suggesting.toggle()
         recompute()
         return true
@@ -229,11 +300,14 @@ final class SearchModel: ObservableObject {
 
     /// Every scanned app's shortcuts, so "brave profile" or "record screen" run without opening the app first.
     /// Built on main when the panel opens (search text cached across opens); ranked off main per keystroke.
-    private struct GlobalItem { let app: AppEntry; let shortcut: Shortcut; let context: String }
+    private struct GlobalItem { let app: AppEntry; let shortcut: Shortcut; let context: String; let used: Double; let kind: DocKind? }
     private var globalIndex: [GlobalItem] = []
     private var globalDirty = true
     private var contextCache: [String: String] = [:]   // app id | shortcut id → search text (synonym expansion is slow)
-    private var globalFound: [(hit: Hit, app: String)] = []
+    /// Matches from every app: `rank` is the plain match strength (comparable with this app's rows), `system` marks
+    /// macOS's own shortcuts (window management, screenshots…), `kind` a document (tab, window, bookmark…).
+    private var globalFound: [(hit: Hit, app: String, rank: Int, system: Bool, kind: DocKind?)] = []
+    private var globalSettled = true   // the everywhere-search has answered for the current query
     private var globalGeneration = 0
     private let globalQueue = DispatchQueue(label: "learn.global-search", qos: .userInitiated)
 
@@ -249,7 +323,8 @@ final class SearchModel: ObservableObject {
             where s.path.first != ElementScanner.marker && s.path.first != LearnActions.group {
                 let key = app.id + "|" + s.id
                 let context = contextCache[key] ?? { let c = s.searchText + " " + name; contextCache[key] = c; return c }()
-                index.append(GlobalItem(app: app, shortcut: s, context: context))
+                index.append(GlobalItem(app: app, shortcut: s, context: context,
+                                        used: UsageStore.shared.score(app: app.id, path: s.path), kind: Self.documentKind(s)))
             }
         }
         globalIndex = index
@@ -259,42 +334,75 @@ final class SearchModel: ObservableObject {
     private func searchGlobal() {
         globalGeneration += 1
         let generation = globalGeneration, q = query
-        guard q.count >= 3 else { globalFound = []; return }
+        guard q.count >= 3 else { globalFound = []; globalSettled = true; return }
+        globalSettled = false
         let index = globalIndex, keyless = Prefs.shared.showMenuCommands
         let running = Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
         globalQueue.async { [weak self] in
-            var scored: [(GlobalItem, Int)] = []
-            for item in index where keyless || item.shortcut.hasKey {
+            var scored: [(GlobalItem, Int, Int)] = []   // item, match strength, order (strength + use + running)
+            for item in index where keyless || item.shortcut.hasKey || item.kind != nil {
                 // Only fairly strong matches: every word hits the title, menu path or app name.
                 guard let r = Fuzzy.rank(q, title: item.shortcut.title, context: item.context, keys: item.shortcut.display), r >= 4_000
                 else { continue }
-                scored.append((item, r * 2 + (running.contains(item.app.id) ? 1 : 0)))
+                // Match quality first; how much you use it (recent use counts more) lifts it within its match tier.
+                scored.append((item, r, r * 2 + Int(min(item.used, 10) * 150) + (running.contains(item.app.id) ? 1 : 0)))
             }
             var seen = Set<String>()   // the same standard item in many apps (Emoji & Symbols…): list it once
-            let found = scored.sorted { $0.1 > $1.1 }
+            let found = scored.sorted { $0.2 > $1.2 }
                 .filter { seen.insert($0.0.shortcut.title.lowercased() + "|" + $0.0.shortcut.display).inserted }
-                .prefix(40).map { (hit: Hit.global($0.0.shortcut, $0.0.app), app: $0.0.app.id) }
+                .prefix(60).map { (hit: Hit.global($0.0.shortcut, $0.0.app), app: $0.0.app.id,
+                                   rank: $0.1 + Int(min($0.0.used, 10) * 150), system: $0.0.app.id == SystemShortcuts.bundleID, kind: $0.0.kind) }
             DispatchQueue.main.async {
                 guard let self, generation == self.globalGeneration else { return }
                 self.globalFound = found
+                self.globalSettled = true
                 self.recompute(keepSelection: true)
             }
         }
     }
 
-    private func globalHits(excluding: String?, limit: Int) -> [Hit] {
-        guard query.count >= 3 else { return [] }
-        return globalFound.filter { $0.app != excluding }.prefix(limit).map(\.hit)
+    /// Quick answers: a calculation or conversion always on top. A definition goes on top too when asked for
+    /// ("define gold", "gold meaning", "synonyms of happy"); otherwise it waits lower down.
+    private func answers() -> (top: [Hit], definition: [Hit]) {
+        guard !query.isEmpty, Prefs.shared.quickAnswers else { return ([], []) }
+        let instant = Answers.instant(query).map { [Hit.answer($0)] } ?? []
+        if let word = Self.dictionaryWord(query) { return (instant + (Answers.define(word).map { [Hit.answer($0)] } ?? []), []) }
+        return (instant, Answers.define(query).map { [Hit.answer($0)] } ?? [])
     }
 
-    /// Spotlight-style rows around the main list: calculator / conversion on top; then apps, a definition, files.
-    private func extras(apps: some Collection<AppEntry>, files limit: Int) -> (top: [Hit], rest: [Hit]) {
-        guard !query.isEmpty else { return ([], []) }
-        let answers = Prefs.shared.quickAnswers
-        let top = answers ? Answers.instant(query).map { [Hit.answer($0)] } ?? [] : []
-        let def = answers ? Answers.define(query).map { [Hit.answer($0)] } ?? [] : []
-        return (top, apps.map(Hit.app) + def + files.prefix(limit).map(Hit.file))
+    private static let dictionaryAsks: Set<String> = ["define", "definition", "definitions", "meaning", "meanings", "mean",
+                                                      "synonym", "synonyms", "antonym", "antonyms"]
+    /// The word in a dictionary request, or nil when the query isn't one.
+    static func dictionaryWord(_ q: String) -> String? {
+        let words = q.lowercased().split(whereSeparator: { $0 == " " || $0 == "?" }).map(String.init)
+        guard words.contains(where: dictionaryAsks.contains) else { return nil }
+        let rest = words.filter { !dictionaryAsks.contains($0) && !["of", "the", "what", "is", "does", "for", "a", "word"].contains($0) }
+        return rest.count == 1 ? rest[0] : nil
     }
+
+    /// Menu items that name a document rather than a command. Tabs show only in their own browser; bookmarks rank like
+    /// other apps' shortcuts; windows of this app come after its commands; history, recent files and other apps'
+    /// windows go low (a Brave tab titled "How to find gold" never tops a search in VS Code).
+    enum DocKind { case tab, window, bookmark, history, recent }
+
+    static func documentKind(_ s: Shortcut) -> DocKind? {
+        guard !s.hasKey, s.path.first != ElementScanner.marker else { return nil }
+        let menus = s.path.dropLast()
+        if menus.contains(where: ["Bookmarks", "Favorites", "Reading List"].contains) { return .bookmark }
+        if menus.contains(where: ["History", "Recently Visited", "Recently Closed"].contains) { return .history }
+        if menus.contains(where: ["Open Recent", "Recent Items"].contains) { return .recent }
+        guard ["Window", "Tab"].contains(s.path.first), s.path.count == 2 else { return nil }   // Brave/Chrome list tabs under Tab
+        let t = s.title.lowercased()
+        guard !windowCommands.contains(where: { t.hasPrefix($0) }) else { return nil }
+        return s.path.first == "Tab" ? .tab : .window
+    }
+    /// Window- and Tab-menu commands (everything else listed there is an open window or tab).
+    private static let windowCommands = ["minimize", "zoom", "fill", "center", "move", "tile", "bring all", "arrange", "remove window",
+                                         "show", "merge", "name window", "enter full", "exit full", "pin", "unpin", "duplicate",
+                                         "close", "select", "go to", "new", "reopen", "float", "cycle", "full screen", "resize",
+                                         "return to", "restore", "developer", "downloads", "extensions", "task manager", "search tabs",
+                                         "mute", "unmute", "group", "ungroup", "reload", "add ", "remove ", "bookmark", "split",
+                                         "open ", "sleep", "discard", "copy", "send ", "share", "rename", "clear", "reset", "toggle"]
 
     // MARK: On-screen elements
 
@@ -310,20 +418,34 @@ final class SearchModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { ElementScanner.showMenu(el) }
     }
 
-    private func scanScreen(appID: String, pid: pid_t, windowTitle: String? = nil) {
+    /// `window`: Ghostty's open quick terminal — scanned right away, alone, before the panel takes the keyboard and it hides.
+    private func scanScreen(appID: String, pid: pid_t, windowTitle: String? = nil, window: AXUIElement? = nil, retries: Int = 4) {
+        if let window {
+            apply(ElementScanner.scan(pid: pid, only: window), appID: appID)
+            return
+        }
         ElementScanner.axQueue(pid).async {   // own windows: main thread (in-process AX); other apps: background
             let els = ElementScanner.scan(pid: pid, windowTitle: windowTitle)
-            DispatchQueue.main.async {
-                var byID: [String: ScreenElement] = [:], rows: [Shortcut] = []
-                for e in els where !e.text.isEmpty {   // unlabeled icons: reachable via label mode only
-                    let s = e.shortcut
-                    if byID[s.id] == nil { byID[s.id] = e; rows.append(s) }
+            // A browser that just had its page accessibility turned on takes ~2 s to build the page's tree: look again.
+            if retries > 0, ElementScanner.isChromiumBrowser(pid), !els.contains(where: \.web) {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
+                    guard let self, self.screen.appID == appID || self.screen.appID.isEmpty else { return }
+                    self.scanScreen(appID: appID, pid: pid, windowTitle: windowTitle, retries: retries - 1)
                 }
-                self.screen = (appID, byID)
-                self.screenRows = rows
-                if self.currentApp?.id == appID { self.recompute(keepSelection: true) }
             }
+            DispatchQueue.main.async { self.apply(els, appID: appID) }
         }
+    }
+
+    private func apply(_ els: [ScreenElement], appID: String) {
+        var byID: [String: ScreenElement] = [:], rows: [Shortcut] = []
+        for e in els where !e.text.isEmpty {   // unlabeled icons: reachable via label mode only
+            let s = e.shortcut
+            if byID[s.id] == nil { byID[s.id] = e; rows.append(s) }
+        }
+        screen = (appID, byID)
+        screenRows = rows
+        if currentApp?.id == appID { recompute(keepSelection: true) }
     }
 
     /// Close the panel and give activation straight to `app` (Learn is still active, so macOS allows it).
@@ -367,16 +489,20 @@ final class SearchModel: ObservableObject {
                 let el = screen.elements[s.id]
                 let pid = app.runningApp?.processIdentifier
                 Debug.log("activate row '\(s.title)' path=\(s.path) el=\(el.map { "\($0.roleName) web=\($0.web) frame=\($0.frame)" } ?? "nil") screenApp=\(screen.appID) app=\(app.id)")
-                handFocus(to: app)
                 Sounds.play(.shortcut)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                    if s.path.first == LearnActions.group { LearnActions.run(s.path) }
-                    else if let el { ElementScanner.perform(el) }
-                    else if let pid { DispatchQueue.global().async { _ = ElementScanner.pressMatching(path: s.path, pid: pid) } }
+                QuickTerminal.restore(for: app.id) { [self] in   // Ghostty's drop-down hid when the panel opened: back first
+                    handFocus(to: app)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+                        if s.path.first == LearnActions.group { LearnActions.run(s.path) }
+                        else if let el { ElementScanner.perform(el) }
+                        else if let pid { DispatchQueue.global().async { _ = ElementScanner.pressMatching(path: s.path, pid: pid) } }
+                    }
                 }
             default:
-                onClose(false)   // Executor activates the target app itself
-                Executor.run(s, in: app)
+                QuickTerminal.restore(for: app.id) { [self] in
+                    onClose(false)   // Executor activates the target app itself
+                    Executor.run(s, in: app)
+                }
             }
         } else {
             switch results[selection] {
@@ -385,10 +511,12 @@ final class SearchModel: ObservableObject {
                 UsageStore.shared.record(app: app.id, path: s.path)
                 onClose(false)
                 Executor.run(s, in: app)
-            case .app(let a) where alt:
+            case .app(let a) where a == Self.settingsEntry:   // Learn's own settings
+                onClose(false)
+                SettingsWindow.shared.show()
+            case .app(let a):   // ↩ opens the app (⇥ shows its shortcuts instead: see drillIn)
                 onClose(false)
                 NSWorkspace.shared.openApplication(at: a.url, configuration: NSWorkspace.OpenConfiguration())
-            case .app(let a): open(a)
             case .file(let f):
                 onClose(false)
                 if alt { NSWorkspace.shared.activateFileViewerSelecting([f.url]) } else { NSWorkspace.shared.open(f.url) }
@@ -405,6 +533,13 @@ final class SearchModel: ObservableObject {
                 KeyHUD.shared.flash(a.value, caption: "Copied")
             }
         }
+    }
+
+    /// ⇥ on an app row: show that app's shortcuts instead of opening it. False when the row isn't an app.
+    func drillIn() -> Bool {
+        guard selection < count, case .app(let a) = results[selection] else { return false }
+        open(a)
+        return true
     }
 
     func open(_ app: AppEntry) {
@@ -511,11 +646,15 @@ final class SearchModel: ObservableObject {
         return out
     }
 
-    func back() { notice = nil; mode = .apps; query = ""; recompute(); focusTick += 1 }
+    func back() {
+        notice = nil
+        if screenOnly { screenOnly = false; query = "" } else { mode = .apps; query = "" }   // on-screen search → the app first
+        recompute(); focusTick += 1
+    }
 
     /// Esc is the only way back: shortcuts → apps; in apps it clears the query, then closes.
     func escape() {
-        if currentApp != nil { back() }
+        if currentApp != nil { if screenOnly && !query.isEmpty { query = "" } else { back() } }
         else if !query.isEmpty { query = "" }
         else { onClose(true) }
     }

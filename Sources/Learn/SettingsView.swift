@@ -8,62 +8,50 @@ final class SettingsWindow {
     var isFront: Bool { window?.isKeyWindow == true && NSApp.isActive }
 
     enum Tab: String, Hashable, CaseIterable, Identifiable {
-        case permissions, appearance, sounds, hotkeys, panel, display, search, advanced, shortcuts, cleaner
+        case permissions, appearance, hotkeys, display, search, advanced, shortcuts
         var id: Self { self }
         var title: String {
             switch self {
-            case .permissions: "Permissions"
+            case .permissions: "General"
             case .appearance: "Appearance"
-            case .sounds: "Sounds"
             case .hotkeys: "Hotkeys"
-            case .panel: "Learn Panel"
             case .display: "On Screen"
             case .search: "Search"
             case .advanced: "Advanced"
             case .shortcuts: "My Shortcuts"
-            case .cleaner: "Cleaner"
             }
         }
         var subtitle: String {
             switch self {
-            case .permissions: "What Learn needs to read and run shortcuts. Changes apply instantly."
+            case .permissions: "Permissions, launch at login, the Cleaner and sounds."
             case .appearance: "The glass Learn is made of — how clear, frosted, colored and lively it is."
-            case .sounds: "A little feedback when you click in Learn and when it runs a shortcut for you."
-            case .hotkeys: "Global keys that work in every app."
-            case .panel: "Keys that work while Learn's panel is open."
+            case .hotkeys: "Learn's keys: global ones that work in every app, and the ones inside Learn's panel."
             case .display: "The shortcut bubble, pointer mode and mouse chords."
             case .search: "What shows up when you type."
             case .advanced: "Shortcut database, scanning and diagnostics."
             case .shortcuts: "Shortcuts you recorded in Learn. They work without touching the apps' own settings."
-            case .cleaner: "Clean up, protect and speed up your Mac — in its own window."
             }
         }
         var symbol: String {
             switch self {
-            case .permissions: "lock.shield.fill"
+            case .permissions: "gearshape.fill"
             case .appearance: "paintbrush.pointed.fill"
-            case .sounds: "speaker.wave.2.fill"
             case .hotkeys: "command"
-            case .panel: "rectangle.and.text.magnifyingglass"
             case .display: "sparkles.rectangle.stack.fill"
             case .search: "magnifyingglass"
             case .advanced: "wrench.and.screwdriver.fill"
             case .shortcuts: "keyboard.fill"
-            case .cleaner: "sparkles"
             }
         }
         var color: Color {
             switch self {
             case .permissions: .blue
             case .appearance: .cyan
-            case .sounds: .red
             case .hotkeys: .purple
-            case .panel: .indigo
             case .display: .pink
             case .search: .teal
             case .advanced: .gray
             case .shortcuts: .orange
-            case .cleaner: .pink
             }
         }
     }
@@ -119,22 +107,14 @@ private struct SettingsRoot: View {
     }
 }
 
-/// Gradient surfaces: the page's own color (Cleaner-style) or the theme's colors, with the grain laid on top.
+/// The Colorful surface: the page's own living gradient (Cleaner-style).
 private struct SettingsBackdrop: View {
     let tab: SettingsWindow.Tab
-    @Environment(\.appearance) private var look
     var body: some View {
-        ZStack {
-            // One surface that changes color in place (Core Animation fades the colors): a crossfade of two surfaces
-            // would be half see-through midway, letting the desktop show through.
-            if look.surface == .theme { SurfaceBackdrop(colors: look.themeColors.map { Color(nsColor: $0.ns) }) }
-            else { SurfaceBackdrop(color: tab.color) }
-            if look.grain > 0, let tile = look.grainStyle.tile(scale: look.grainScale, color: look.grainColor) {
-                Image(nsImage: tile).resizable(resizingMode: .tile)
-                    .opacity(look.grain * look.grainStyle.strength).blendMode(look.grainStyle.blend(colored: look.grainColor != nil))
-            }
-        }
-        .allowsHitTesting(false)
+        // One surface that changes color in place (Core Animation fades the colors): a crossfade of two surfaces
+        // would be half see-through midway, letting the desktop show through.
+        SurfaceBackdrop(color: tab.color)
+            .allowsHitTesting(false)
     }
 }
 
@@ -174,14 +154,11 @@ struct SettingsView: View {
                 switch selection.tab {
                 case .permissions: PermissionsPane()
                 case .appearance: AppearancePane()
-                case .sounds: SoundsPane()
                 case .hotkeys: HotkeysPane()
-                case .panel: PanelPane()
                 case .display: DisplayPane()
                 case .search: SearchPane()
                 case .advanced: AdvancedPane()
                 case .shortcuts: ShortcutsPane()
-                case .cleaner: CleanerPane()
                 }
             }
             .id(selection.tab)
@@ -417,7 +394,8 @@ private struct PermissionsPane: View {
     @State private var ax = AXIsProcessTrusted()
     @State private var post = CGPreflightPostEventAccess()
     @State private var listen = CGPreflightListenEventAccess()
-    @State private var login = SMAppService.mainApp.status == .enabled
+    @State private var login = LoginItem.isOn
+    @State private var loginError: String?
     private let tick = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var missing: Int { [ax, post, listen].filter { !$0 }.count }
@@ -455,18 +433,27 @@ private struct PermissionsPane: View {
                     _ = CGRequestListenEventAccess(); openPane("Privacy_ListenEvent")
                 }
                 ToggleRow(title: "Launch at login",
-                          detail: "Start Learn automatically so \(Prefs.shared.panelKey.shortcut.display.macKeyWords) always works.",
+                          detail: loginError ?? (LoginItem.needsApproval
+                              ? "Turn Learn on in System Settings ▸ General ▸ Login Items to finish."
+                              : "Start Learn automatically so \(Prefs.shared.panelKey.shortcut.display.macKeyWords) always works."),
                           symbol: "power", color: .green,
                           isOn: SwiftUI.Binding(get: { login }, set: { on in
-                              let svc = SMAppService.mainApp
-                              try? on ? svc.register() : svc.unregister()
-                              login = svc.status == .enabled
+                              loginError = LoginItem.set(on).map { "Couldn't change it: \($0)" }
+                              login = LoginItem.isOn
                           }))
                 Note(text: "If a permission stays off after granting, remove Learn from that list in System Settings and add it again.")
             }
+            Section("Cleaner") {
+                SettingRow(title: "Cleaner", detail: "Smart Care, Cleanup, Protection, Performance, Applications and My Clutter, in their own window.",
+                           symbol: "sparkles", color: .pink) {
+                    Button("Open") { CleanerWindow.shared.show() }.glassButton(prominent: true)
+                }
+            }
+            SoundSection()
         }
         .onReceive(tick) { _ in
             ax = AXIsProcessTrusted(); post = CGPreflightPostEventAccess(); listen = CGPreflightListenEventAccess()
+            login = LoginItem.isOn   // follows the menu bar switch and System Settings too
             login = SMAppService.mainApp.status == .enabled
         }
     }
@@ -498,180 +485,37 @@ private struct PermissionRow: View {
 
 // MARK: Cleaner
 
-/// Opens the Cleaner window (it has its own window, like a separate app); this page is its launcher.
-private struct CleanerPane: View {
-    var body: some View {
-        Pane(tab: .cleaner) {
-            Section {
-                SettingRow(title: "Open Cleaner", detail: "Smart Care, Cleanup, Protection, Performance, Applications, My Clutter and Space Lens.",
-                           symbol: "sparkles", color: .pink) {
-                    Button("Open") { CleanerWindow.shared.show() }.glassButton(prominent: true)
-                }
-            }
-        }
-        .onAppear { CleanerWindow.shared.show() }   // clicking the tab opens the window straight away
-    }
-}
-
 // MARK: Appearance
 
 private struct AppearancePane: View {
-    private static let families = NSFontManager.shared.availableFontFamilies
     @ObservedObject private var prefs = Prefs.shared
     private var look: SwiftUI.Binding<Appearance> { $prefs.appearance }
 
     var body: some View {
         Pane(tab: .appearance) {
             Section {
-                ThemeDesigner()
-            } header: {
-                Text("Theme")
-            } footer: {
-                Text("Drag the dots to pick colors — the big one turns the others with it. Double-click the wheel to add a color.")
-                    .font(.app(11.5)).foregroundStyle(.secondary)
-            }
-            Section {
-                SettingRow(title: "Surface", detail: "Colorful gives each page its own living gradient, like the Cleaner. Theme uses your colors above. Glass uses the blur below.",
+                SettingRow(title: "Surface", detail: "Colorful gives each page its own living gradient, like the Cleaner. Liquid glass lets the screen show through.",
                            symbol: "rectangle.fill.on.rectangle.angled.fill", color: .pink) {
                     Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.surface }, set: { prefs.appearance.surfaceChoice = $0 })) {
                         ForEach(Appearance.Surface.allCases) { Text($0.title).tag($0) }
                     }
                     .labelsHidden().frame(width: 190)
                 }
-            } header: {
-                HStack {
-                    Text("Surface")
-                    Spacer()
-                    Button("Reset to Default") { withAnimation(Theme.smooth) { prefs.appearance = Appearance() } }
-                        .controlSize(.small)
-                        .disabled(prefs.appearance == Appearance())
-                }
-            }
-            Section {
-                SettingRow(title: "Glass", detail: "Liquid is Spotlight's glass. Frosted is a Gaussian blur that lets more of the screen through.",
-                           symbol: "square.stack.3d.up.fill", color: .indigo) {
-                    VStack(alignment: .trailing, spacing: 8) {
-                        Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.blur.isLiquid }, set: { liquid in
-                            guard liquid != prefs.appearance.blur.isLiquid else { return }
-                            prefs.appearance.blurStyleChoice = liquid ? .liquidRegular : .gaussian
-                            prefs.appearance.blurRadiusChoice = nil
-                            prefs.appearance.blurSaturationChoice = nil
-                        })) {
-                            Text("Liquid glass").tag(true)
-                            Text("Frosted glass").tag(false)
-                        }
-                        .pickerStyle(.segmented).labelsHidden().frame(width: 230)
-                        amount(SwiftUI.Binding(get: { prefs.appearance.blurAmount }, set: { prefs.appearance.blurAmountChoice = $0 }),
-                               label: "Opacity")
-                            .disabled(prefs.appearance.blur == .none)
+                // Gradients draw their own color; only the glass takes one.
+                if prefs.appearance.surface == .glass {
+                    SettingRow(title: "Glass color", symbol: "paintpalette.fill", color: .purple) {
+                        ColorPicker("", selection: SwiftUI.Binding(get: { prefs.appearance.tintColor },
+                                                                   set: { prefs.appearance.tint = HUDStyle.RGBA(NSColor($0)) }),
+                                    supportsOpacity: false)
+                            .labelsHidden()
                     }
-                }
-                SettingRow(title: "Blur", detail: prefs.appearance.blur.isTunable
-                           ? "A true Gaussian blur of what's behind. Radius sets how soft; saturation how vivid the colors come through."
-                           : "Every blur Learn can draw. macOS fixes this one's strength; Opacity above fades it in or out.",
-                           symbol: "drop.halffull", color: .cyan) {
-                    VStack(alignment: .trailing, spacing: 8) {
-                        Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.blur }, set: { style in
-                            prefs.appearance.blurStyleChoice = style
-                            prefs.appearance.blurRadiusChoice = nil          // each tunable blur starts at its preset
-                            prefs.appearance.blurSaturationChoice = nil
-                        })) {
-                            Section("Liquid Glass") { ForEach(BlurStyle.liquid) { Text($0.title).tag($0) } }
-                            Section("Adjustable blur") { ForEach(BlurStyle.tunable) { Text($0.title).tag($0) } }
-                            Section("Materials") { ForEach(BlurStyle.materials) { Text($0.title).tag($0) } }
-                            Section("Behind window") { ForEach(BlurStyle.appKit) { Text($0.title).tag($0) } }
-                            Divider()
-                            Text(BlurStyle.none.title).tag(BlurStyle.none)
-                        }
-                        .labelsHidden().frame(width: 230)
-                        if prefs.appearance.blur.isTunable {
-                            amount(SwiftUI.Binding(get: { prefs.appearance.blurRadius }, set: { prefs.appearance.blurRadiusChoice = $0 }),
-                                   range: 0...BlurStyle.maxRadius, label: "Radius", format: { String(format: "%.1f pt", $0) })
-                            amount(SwiftUI.Binding(get: { prefs.appearance.blurSaturation }, set: { prefs.appearance.blurSaturationChoice = $0 }),
-                                   range: 0...2.5, label: "Saturation", format: { String(format: "%.1f×", $0) })
-                        }
-                    }
-                }
-                SettingRow(title: "Grain", detail: "A texture on the glass, from fine film to glitter. Natural blends grey grain in; Custom colors it.",
-                           symbol: "circle.dotted", color: .brown) {
-                    VStack(alignment: .trailing, spacing: 8) {
-                        Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.grainStyle }, set: { style in
-                            prefs.appearance.grainStyleChoice = style
-                            if style != .none, prefs.appearance.grain == 0 { prefs.appearance.grainChoice = 0.5 }
-                        })) {
-                            Text(GrainStyle.none.title).tag(GrainStyle.none)
-                            Section("Noise") { ForEach(GrainStyle.noises) { Text($0.title).tag($0) } }
-                            Section("Patterns") { ForEach(GrainStyle.patterns) { Text($0.title).tag($0) } }
-                        }
-                        .labelsHidden().frame(width: 230)
-                        HStack(spacing: 8) {
-                            Text("Color").font(.app(11.5)).foregroundStyle(.secondary)
-                            Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.grainColor == nil }, set: { natural in
-                                prefs.appearance.grainColor = natural ? nil : prefs.appearance.grainColor ?? prefs.appearance.themeColors[0]
-                            })) {
-                                Text("Natural").tag(true)
-                                Text("Custom").tag(false)
-                            }
-                            .pickerStyle(.segmented).labelsHidden().frame(width: 140)
-                            ColorPicker("", selection: SwiftUI.Binding(
-                                get: { Color(nsColor: (prefs.appearance.grainColor ?? prefs.appearance.themeColors[0]).ns) },
-                                set: { prefs.appearance.grainColor = HUDStyle.RGBA(NSColor($0)) }), supportsOpacity: false)
-                                .labelsHidden().frame(width: 38)
-                                .opacity(prefs.appearance.grainColor == nil ? 0.35 : 1)
-                        }
-                        .disabled(prefs.appearance.grainStyle == .none)
-                        amount(SwiftUI.Binding(get: { prefs.appearance.grain }, set: { prefs.appearance.grainChoice = $0 }))
-                            .disabled(prefs.appearance.grainStyle == .none)
-                        amount(SwiftUI.Binding(get: { prefs.appearance.grainScale }, set: { prefs.appearance.grainScaleChoice = $0 }),
-                               range: 0.5...3, label: "Size", format: { String(format: "%.1f×", $0) })
-                            .disabled(prefs.appearance.grainStyle == .none)
-                    }
-                }
-            } header: {
-                Text("Glass & texture")
-            } footer: {
-                Text("Mix any blur with any grain — the window around you is the preview.").font(.app(11.5)).foregroundStyle(.secondary)
-            }
-            Section("Type") {
-                SettingRow(title: "App font", detail: "Used for all of Learn's text. The on-screen bubble has its own font in On Screen.",
-                           symbol: "textformat", color: .orange) {
-                    Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.font }, set: { prefs.appearance.fontChoice = $0 })) {
-                        Text("SF Pro").tag("")
-                        Text("SF Rounded").tag(".rounded")
-                        Text("New York").tag(".serif")
-                        Text("SF Mono").tag(".mono")
-                        Divider()
-                        ForEach(Self.families, id: \.self) { Text($0).font(.custom($0, size: 13)).tag($0) }
-                    }
-                    .labelsHidden().frame(width: 200)
-                }
-                Text("The quick brown fox jumps over the lazy dog — shift ⌘N  File › New Folder")
-                    .font(.app(15, .medium))
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 4)
-            }
-            Section("Icons") {
-                SettingRow(title: "Selected", detail: "The selected sidebar item, and icons on every page.",
-                           symbol: "square.grid.2x2.fill", color: .blue) {
-                    iconPicker(SwiftUI.Binding(get: { prefs.appearance.iconStyle }, set: { prefs.appearance.iconStyleChoice = $0 }))
-                }
-                SettingRow(title: "Not selected", detail: "The other sidebar items. Frosted glass lets the selected one stand out, as in the Cleaner.",
-                           symbol: "square.grid.2x2", color: .gray) {
-                    iconPicker(SwiftUI.Binding(get: { prefs.appearance.idleIconStyle }, set: { prefs.appearance.idleIconStyleChoice = $0 }))
+                    slider("Color intensity", "How strongly the glass takes the color. 0 keeps it clear.",
+                           "drop.fill", .blue, look.tintStrength, 0...1, percent: true)
                 }
             }
-            Section("Shape") {
-                slider("Corner roundness", nil, "app.fill", .orange, look.cornerRadius, 10...40, format: "%.0f pt")
-                slider("Shadow", "How far the glass seems to float.", "shadow", .gray, look.shadow, 0...1, percent: true)
-            }
-            Section("Light & motion") {
-                slider("Pointer light", "How much the glass glows and its rim shines under the pointer.",
-                       "light.max", .yellow, look.light, 0...2, percent: true)
+            Section("Motion") {
                 slider("Jelly wobble", "How much windows wobble when you drag them. 0 turns it off.",
                        "water.waves", .teal, look.wobble, 0...2, percent: true)
-                ToggleRow(title: "Hover motion", detail: "Buttons swell and lean toward the pointer; big icons tilt.",
-                          symbol: "cursorarrow.motionlines", color: .green, isOn: look.hoverMotion)
             }
             Section {
                 HStack {
@@ -681,26 +525,6 @@ private struct AppearancePane: View {
                         .disabled(prefs.appearance == Appearance())
                 }
             }
-        }
-    }
-
-    private func iconPicker(_ value: SwiftUI.Binding<Appearance.IconStyle>) -> some View {
-        Picker("", selection: value) {
-            ForEach(Appearance.IconStyle.allCases) { style in
-                Label { Text(style.title) } icon: { IconTile(symbol: "star.fill", color: .orange, size: 16, style: style) }
-                    .tag(style)
-            }
-        }
-        .labelsHidden().frame(width: 170)
-    }
-
-    /// Compact labeled slider for a control's second line.
-    private func amount(_ value: SwiftUI.Binding<Double>, range: ClosedRange<Double> = 0...1, label: String = "Amount",
-                        format: @escaping (Double) -> String = { "\(Int(($0 * 100).rounded()))%" }) -> some View {
-        HStack(spacing: 8) {
-            Text(label).font(.app(11.5)).foregroundStyle(.secondary)
-            Slider(value: value, in: range).sliderTicks(value.wrappedValue, in: range).frame(width: 150)
-            Text(format(value.wrappedValue)).font(.app(11.5)).monospacedDigit().foregroundStyle(.secondary).frame(width: 38, alignment: .trailing)
         }
     }
 
@@ -718,58 +542,24 @@ private struct AppearancePane: View {
 
 // MARK: Sounds
 
-private struct SoundsPane: View {
+/// Volume for Learn's click and shortcut sounds (shown on the General page).
+private struct SoundSection: View {
     @ObservedObject private var prefs = Prefs.shared
-
     var body: some View {
-        Pane(tab: .sounds) {
-            Section {
-                SettingRow(title: "Clicks", detail: "Buttons, rows, switches and the sidebar in Learn.",
-                           symbol: "cursorarrow.click", color: .blue) {
-                    SoundPicker(selection: SwiftUI.Binding(get: { prefs.appearance.clickSound },
-                                                           set: { prefs.appearance.clickSoundChoice = $0 }))
-                }
-                SettingRow(title: "Shortcut runs", detail: "When Learn runs a shortcut, command or on-screen item for you.",
-                           symbol: "bolt.fill", color: .orange) {
-                    SoundPicker(selection: SwiftUI.Binding(get: { prefs.appearance.shortcutSound },
-                                                           set: { prefs.appearance.shortcutSoundChoice = $0 }))
-                }
-                SettingRow(title: "Volume", symbol: "speaker.wave.3.fill", color: .red) {
-                    HStack(spacing: 10) {
-                        Slider(value: SwiftUI.Binding(get: { prefs.appearance.soundVolume }, set: { prefs.appearance.soundVolumeChoice = $0 }),
-                               in: 0...1) { editing in if !editing { Sounds.play(.click) } }
-                            .sliderTicks(prefs.appearance.soundVolume, in: 0...1)
-                            .frame(width: 180)
-                        Text("\(Int((prefs.appearance.soundVolume * 100).rounded()))%")
-                            .monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
-                    }
+        Section("Sounds") {
+            SettingRow(title: "Volume", detail: "Clicks in Learn, and each shortcut it runs for you. 0 is silent.",
+                       symbol: "speaker.wave.3.fill", color: .red) {
+                HStack(spacing: 10) {
+                    Slider(value: SwiftUI.Binding(get: { prefs.appearance.soundVolume }, set: { prefs.appearance.soundVolumeChoice = $0 }),
+                           in: 0...1) { editing in if !editing { Sounds.play(.click) } }
+                        .sliderTicks(prefs.appearance.soundVolume, in: 0...1)
+                        .frame(width: 180)
+                    Text("\(Int((prefs.appearance.soundVolume * 100).rounded()))%")
+                        .monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
                 }
             }
         }
     }
-}
-
-/// Sound menu (Learn's own, then macOS's) with a play button; choosing one plays it.
-private struct SoundPicker: View {
-    @SwiftUI.Binding var selection: SoundEffect
-    var body: some View {
-        HStack(spacing: 8) {
-            Picker("", selection: SwiftUI.Binding(get: { selection }, set: { selection = $0; preview() })) {
-                Text("None").tag(SoundEffect.none)
-                Section("Learn") { ForEach(SoundEffect.learn) { Text($0.title).tag($0) } }
-                Section("macOS") { ForEach(SoundEffect.system) { Text($0.title).tag($0) } }
-            }
-            .labelsHidden().frame(width: 150)
-            Button(action: preview) {
-                Image(systemName: "play.fill").font(.system(size: 10, weight: .bold)).frame(width: 26, height: 26)
-            }
-            .buttonStyle(LiquidButtonStyle(shape: Circle(), sound: false))
-            .foregroundStyle(.secondary)
-            .disabled(selection == .none)
-            .help("Play")
-        }
-    }
-    private func preview() { Sounds.play(selection, volume: Prefs.shared.appearance.soundVolume) }
 }
 
 // MARK: Hotkeys
@@ -839,17 +629,19 @@ private struct HotkeysPane: View {
                 }
                 Note(text: "Any other command or menu item: select it in Learn and press \(prefs.recordKey.shortcut.display.macKeyWords).")
             }
+            PanelSections()
         }
     }
 }
 
 // MARK: Panel
 
-private struct PanelPane: View {
+/// Keys that work while Learn's panel is open (shown on the Hotkeys page).
+private struct PanelSections: View {
     @ObservedObject private var prefs = Prefs.shared
     var body: some View {
-        Pane(tab: .panel) {
-            Section {
+        Group {
+            Section("In the Learn panel") {
                 SettingRow(title: "Record a shortcut", detail: "For the selected item.", symbol: "record.circle", color: .red) {
                     HStack(spacing: 6) {
                         KeyRecorder(display: prefs.recordKey.shortcut.display, panelKey: true) { code, mods in
@@ -858,17 +650,12 @@ private struct PanelPane: View {
                         ResetButton(disabled: prefs.recordKey == Prefs.defaultRecordKey) { prefs.recordKey = Prefs.defaultRecordKey }
                     }
                 }
-                SettingRow(title: "Right-click", detail: "The selected on-screen item.", symbol: "cursorarrow.click.2", color: .blue) {
-                    HStack(spacing: 6) {
-                        KeyRecorder(display: prefs.contextKey.shortcut.display, panelKey: true) { code, mods in
-                            prefs.contextKey = Learn.Binding(path: Prefs.defaultContextKey.path, keyCode: code, mods: mods)
-                        }
-                        ResetButton(disabled: prefs.contextKey == Prefs.defaultContextKey) { prefs.contextKey = Prefs.defaultContextKey }
-                    }
-                }
             }
-            Section("Built in") {
-                ForEach([("↩", "Run the selected item / open the selected app"), ("⇥", "Nothing typed: switch between frequently used and suggested shortcuts"), ("↑", "Move the selection up"), ("↓", "Move the selection down"),
+            Section("Built into the panel") {
+                ForEach([("↩", "Run the selected item / open the selected app"), ("⇥", "Next item (on an app: show its shortcuts instead of opening it)"), ("⇧⇥", "Previous item"),
+                         ("⇥ + Space", "Right-click the highlighted on-screen item"),
+                         ("⇥ ", "Nothing typed in an app: search only what's on screen"), ("⇧⇥ ", "Nothing typed in an app: frequently used ↔ suggested"),
+                         ("↑", "Move the selection up"), ("↓", "Move the selection down"),
                          ("⎋", "Back to the app list, then close (or delete on empty search)"), ("⌘R", "Full rescan of this app (it also refreshes quietly each time you open it)"),
                          ("⌘,", "Open these settings"), ("⌘W", "Close Learn")], id: \.1) { key, what in
                     HStack(alignment: .center) {
