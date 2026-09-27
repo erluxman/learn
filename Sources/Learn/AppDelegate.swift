@@ -91,15 +91,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
-    /// Whether `app` has a normal window on screen (desktop icons, menus and panels don't count).
+    /// Whether `app` has a normal window on the screen the panel opens on (desktop icons, menus and panels don't count).
+    /// A window on another display doesn't count: the screen you're looking at is empty.
     private static func hasOpenWindow(_ app: NSRunningApplication) -> Bool {
+        guard let screen = NSScreen.main?.frame, let top = NSScreen.screens.first?.frame.maxY else { return false }
         let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
         return list.contains { w in
             guard (w[kCGWindowOwnerPID as String] as? pid_t) == app.processIdentifier,
                   (w[kCGWindowLayer as String] as? Int) == 0,
                   (w[kCGWindowAlpha as String] as? Double ?? 1) > 0,
                   let b = w[kCGWindowBounds as String] as? [String: Double] else { return false }
-            return (b["Width"] ?? 0) > 60 && (b["Height"] ?? 0) > 60
+            let x = b["X"] ?? 0, y = b["Y"] ?? 0, width = b["Width"] ?? 0, height = b["Height"] ?? 0
+            let visible = NSRect(x: x, y: top - y - height, width: width, height: height).intersection(screen)   // CG is top-left origin
+            return visible.width > 60 && visible.height > 60
         }
     }
 
@@ -141,7 +145,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             panel.returnTo = target   // focus still goes back to it on close
             QuickTerminal.capture(target)   // before the panel takes the keyboard and Ghostty's drop-down hides
             Debug.log("show target=\(target?.bundleIdentifier ?? "nil") quickTerminal=\(QuickTerminal.window != nil) hasWindow=\(target.map(Self.hasOpenWindow) ?? false) space=\(Debug.space)")
-            // Nothing open (e.g. Finder on a bare desktop): open on the app list, as if no app were selected.
+            // Nothing open on this screen (e.g. Finder on a bare desktop): open on the app list, as if no app were selected.
             // (Ghostty's quick terminal floats above normal windows, so it's counted separately.)
             model.willShow(frontmost: target.flatMap { Self.hasOpenWindow($0) || QuickTerminal.window != nil ? $0 : nil })
         }
