@@ -1,38 +1,48 @@
 import SwiftUI
 
+/// Spotlight's look (macOS 26), measured off a screen recording: one glass shape that is just the search pill until
+/// there are results, then grows downward into the list. No header, buttons, footer or section titles.
+private enum Metric {
+    static let width: CGFloat = 640
+    static let bar: CGFloat = 54
+    static let radius: CGFloat = 26
+    static let row: CGFloat = 56
+    static let inset: CGFloat = 10       // rows (and the selection) sit this far in from the glass edge
+    static let maxRows: CGFloat = 7.5    // half a row peeks out: there's more below
+    static let window = CGSize(width: 720, height: 520)
+}
+
 struct SearchView: View {
     @ObservedObject var model: SearchModel
     @FocusState private var focused: Bool
-    @Namespace private var glass
-    @State private var shown = true   // entrance: search bar drops in, results follow a beat later
+    @State private var shown = true   // entrance: a quick fade and settle, like Spotlight
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.appearance) private var look
 
-    /// The panel's color: the current app's icon color, else the glass tint, else the accent.
-    private var ambient: Color {
-        if let app = model.currentApp { return IconColor.of(app) }
-        return look.tintStrength > 0 ? look.tintColor : .accentColor
-    }
+    /// Spotlight is just the pill until there's something to list.
+    private var expanded: Bool { !model.results.isEmpty || model.recording != nil || !model.trusted }
+    private var selected: Hit? { model.selection < model.results.count ? model.results[model.selection] : nil }
 
     var body: some View {
-        GlassGroup(spacing: 10) {
-            VStack(spacing: 10) {
-                header
-                    .scaleEffect(shown ? 1 : 0.94, anchor: .top)
-                    .offset(y: shown ? 0 : -8)
-                    .opacity(shown ? 1 : 0)
-                    .animation(.spring(response: 0.42, dampingFraction: 0.72), value: shown)
-                results
-                    .scaleEffect(shown ? 1 : 0.96, anchor: .top)
-                    .offset(y: shown ? 0 : -14)
-                    .opacity(shown ? 1 : 0)
-                    .blur(radius: shown ? 0 : 6)
-                    .animation(.spring(response: 0.5, dampingFraction: 0.78).delay(0.05), value: shown)
+        let shape = RoundedRectangle(cornerRadius: expanded ? Metric.radius : Metric.bar / 2, style: .continuous)
+        VStack(spacing: 0) {
+            bar
+            if expanded {
+                Rectangle().fill(Color.primary.opacity(0.1)).frame(height: 1).padding(.horizontal, 20)
+                results.transition(.opacity)
             }
         }
-        .shadow(color: .black.opacity(look.shadow * 0.5), radius: 20 * look.shadow, y: 10 * look.shadow)
-        .padding(2)
-        .frame(width: 720, height: 480)
+        .frame(width: Metric.width)
+        .clipShape(shape)
+        .liquidGlass(in: shape)   // plain Liquid Glass by default, like Spotlight; Settings ▸ Appearance can change it
+        .glassRim(shape)
+        .shadow(color: .black.opacity(look.shadow * 0.5), radius: 24 * look.shadow, y: 12 * look.shadow)
+        .scaleEffect(shown ? 1 : 0.97, anchor: .top)
+        .opacity(shown ? 1 : 0)
+        .animation(.spring(response: 0.26, dampingFraction: 0.9), value: shown)
+        .animation(.spring(response: 0.28, dampingFraction: 0.92), value: expanded)
+        .padding(.top, 2)
+        .frame(width: Metric.window.width, height: Metric.window.height, alignment: .top)
         .onAppear { focused = true }
         .onChange(of: model.focusTick) { focused = true }
         .onChange(of: model.presentTick) {
@@ -43,93 +53,75 @@ struct SearchView: View {
         }
     }
 
-    // MARK: Header: search capsule + round buttons
+    // MARK: Search bar
 
-    private var header: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 12) {
-                if let app = model.currentApp {
-                    HStack(spacing: 7) {
-                        Image(nsImage: AppCatalog.icon(app)).resizable().frame(width: 22, height: 22)
-                        Text(app.name).font(.app(13, .semibold)).lineLimit(1)
-                    }
-                    .padding(.leading, 5).padding(.trailing, 11).padding(.vertical, 5)
-                    .background(Theme.highlight, in: Capsule())
-                    .transition(.scale(scale: 0.7, anchor: .leading).combined(with: .opacity))
-                } else {
-                    Image(systemName: "magnifyingglass")
-                        .font(.app(19, .medium)).foregroundStyle(.secondary)
-                        .transition(.scale(scale: 0.6).combined(with: .opacity))
-                }
-                TextField(model.currentApp == nil ? "Search apps, shortcuts and files" : "Search \(model.currentApp!.name) shortcuts",
-                          text: $model.query)
-                    .textFieldStyle(.plain)
-                    .font(.app(22, .regular))
-                    .focused($focused)
-                if model.scanning {
-                    ProgressView().controlSize(.small).transition(.opacity)
-                }
+    private var bar: some View {
+        HStack(spacing: 14) {
+            if let app = model.currentApp {
+                Image(nsImage: AppCatalog.icon(app)).resizable().interpolation(.high).frame(width: 26, height: 26)
+            } else {
+                Image(systemName: "magnifyingglass").font(.app(21)).foregroundStyle(.secondary)
             }
-            .padding(.horizontal, 18)
-            .frame(height: 58)
-            .liquidGlass(in: Capsule())
-            .glassID("search", in: glass)
-            .pointerLight(Capsule(), strength: 0.8, radius: 180)
-
-            roundButton("gearshape", id: "settings", help: "Learn Settings (⌘,)") { model.openSettings() }
+            TextField(model.currentApp.map { "Search \($0.name)" } ?? "Learn Search", text: $model.query)
+                .textFieldStyle(.plain)
+                .font(.app(26))
+                .focused($focused)
+                .overlay(alignment: .leading) { completion }
+            if model.scanning || model.suggesting && model.results.isEmpty {
+                ProgressView().controlSize(.small).transition(.opacity)
+            } else if !model.query.isEmpty, let hit = selected {
+                HitIcon(hit: hit, app: model.currentApp, size: 26, badge: false).transition(.opacity)
+            }
         }
-        .animation(Theme.smooth, value: model.currentApp?.id)
-        .animation(Theme.snappy, value: model.scanning)
+        .padding(.horizontal, 20)
+        .frame(height: Metric.bar)
+        .animation(.easeOut(duration: 0.15), value: model.scanning)
     }
 
-    private func roundButton(_ symbol: String, id: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.app(17, .medium))
-                .frame(width: 58, height: 58)
+    /// Spotlight's grey tag right after the typed text: "hey  — Siri". Here also one-off notices ("Copied", "Saved").
+    @ViewBuilder
+    private var completion: some View {
+        let label = model.notice ?? (model.query.isEmpty ? nil : selected.map { "— " + HitRow.title($0) })
+        if let label {
+            HStack(spacing: 3) {
+                Text(verbatim: model.query).font(.app(26)).fixedSize().hidden()
+                Text(verbatim: label)
+                    .font(.app(15)).foregroundStyle(.secondary).lineLimit(1)
+                    .padding(.horizontal, 10).frame(height: 30)
+                    .background(Color.primary.opacity(0.07), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .clipped()
+            .allowsHitTesting(false)
         }
-        .buttonStyle(LiquidButtonStyle(shape: Circle(), glassID: id, namespace: glass))
-        .foregroundStyle(.secondary)
-        .help(help)
     }
 
-    // MARK: Results card
+    // MARK: Results
+
+    private var resultsHeight: CGFloat {
+        let rows = min(CGFloat(model.results.count), Metric.maxRows)
+        let list = rows > 0 ? rows * Metric.row + 2 * Metric.inset : 0
+        return (model.trusted ? 0 : 76) + (model.recording != nil ? max(list, 340) : list)
+    }
 
     private var results: some View {
         VStack(spacing: 0) {
             if !model.trusted { permissionBanner }
             ZStack {
-                list.id(model.currentApp?.id ?? "apps")   // fresh list per mode
-                    .transition(.asymmetric(insertion: .move(edge: model.currentApp == nil ? .leading : .trailing).combined(with: .opacity),
-                                            removal: .opacity))
-                if model.results.isEmpty && !model.scanning { emptyState.transition(.opacity) }
+                list
                 if let r = model.recording { recorder(r).transition(.opacity) }
             }
-            .clipped()
-            .animation(Theme.smooth, value: model.currentApp?.id)
             .animation(Theme.snappy, value: model.recording?.id)
-            Rectangle().fill(Theme.hairline).frame(height: 1)
-            footer
         }
-        .frame(maxHeight: .infinity)
-        .background(alignment: .top) {   // the app's color washes in from the top, like light through tinted glass
-            LinearGradient(colors: [ambient.opacity(0.2), ambient.opacity(0)], startPoint: .top, endPoint: .bottom)
-                .frame(height: 220)
-                .allowsHitTesting(false)
-                .animation(Theme.smooth, value: model.currentApp?.id)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: look.radius, style: .continuous))
-        .liquidGlass(in: RoundedRectangle(cornerRadius: look.radius, style: .continuous))
-        .glassID("results", in: glass)
-        .pointerLight(RoundedRectangle(cornerRadius: look.radius, style: .continuous), strength: 0.45, radius: 280)
+        .frame(height: resultsHeight, alignment: .top)
     }
 
     private var permissionBanner: some View {
         HStack(spacing: 12) {
-            IconTile(symbol: "lock.fill", color: .orange, size: 30)
+            IconTile(symbol: "lock.fill", color: .orange, size: 32)
             VStack(alignment: .leading, spacing: 1) {
-                Text("Accessibility access needed").font(.app(13, .semibold))
-                Text("Learn reads menus and runs shortcuts through it.").font(.app(11.5)).foregroundStyle(.secondary)
+                Text("Accessibility access needed").font(.app(15, .medium))
+                Text("Learn reads menus and runs shortcuts through it.").font(.app(13)).foregroundStyle(.secondary)
             }
             Spacer()
             Button("Grant Access") {
@@ -138,95 +130,34 @@ struct SearchView: View {
             .glassButton(prominent: true)
             .tint(.orange)
         }
-        .padding(12)
-        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: Theme.cardRadius, style: .continuous))
-        .padding([.horizontal, .top], 8)
-    }
-
-    private var emptyState: some View {
-        VStack(spacing: 6) {
-            HeroIcon(symbol: model.query.isEmpty ? "keyboard.fill" : "magnifyingglass", color: ambient, size: 52)
-            if model.suggesting {
-                Text("Ranking shortcuts…").font(.app(16, .semibold))
-                Text("Scoring what's worth knowing in \(model.currentApp?.name ?? "this app").").font(.app(12)).foregroundStyle(.secondary)
-            } else if model.query.isEmpty, let app = model.currentApp {   // no history here yet: shortcuts appear as you use them
-                Text("Type to search \(app.name)").font(.app(16, .semibold))
-                HStack(spacing: 5) {
-                    Text("Shortcuts you use often show up here · press").font(.app(12)).foregroundStyle(.secondary)
-                    Keycaps(display: "⇥", size: 10, dim: true)
-                    Text("for suggestions").font(.app(12)).foregroundStyle(.secondary)
-                }
-            } else {
-                Text(model.query.isEmpty ? "Nothing here yet" : "No results for “\(model.query)”")
-                    .font(.app(16, .semibold))
-                if model.currentApp != nil {
-                    Text("Press ⌘R to scan this app again").font(.app(12)).foregroundStyle(.secondary)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 20).frame(height: 76)
     }
 
     // Rows are identified by element id only (never by index) so filtering/mode changes can't show stale rows.
     private var list: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 1) {
+                LazyVStack(spacing: 0) {
                     ForEach(Array(model.results.enumerated()), id: \.element.id) { i, hit in
-                        let on = i == model.selection
-                        let section = self.section(hit)
-                        VStack(alignment: .leading, spacing: 1) {
-                        if i == 0 || self.section(model.results[i - 1]) != section {
-                            Text(section)
-                                .font(.app(11.5, .semibold)).foregroundStyle(.secondary)
-                                .padding(.horizontal, 12).padding(.top, i == 0 ? 2 : 12).padding(.bottom, 4)
-                        }
-                        Group {
-                            switch hit {
-                            case .shortcut(let s): ShortcutRow(s: s)
-                            case .global(let s, let a): ShortcutRow(s: s, app: a)
-                            case .app(let a): AppRow(app: a)
-                            case .file(let f): FileRow(f: f)
-                            case .answer(let a): AnswerRow(a: a)
+                        HitRow(hit: hit, app: model.currentApp)
+                            .frame(maxWidth: .infinity, minHeight: Metric.row, alignment: .leading)
+                            .background {
+                                if i == model.selection {
+                                    RoundedRectangle(cornerRadius: 16, style: .continuous).fill(Color.primary.opacity(0.1))
+                                }
                             }
-                        }
-                        .padding(.horizontal, 10).padding(.vertical, 7)
-                        .frame(maxWidth: .infinity, minHeight: 46, alignment: .leading)
-                        .contentShape(Rectangle())
-                        .asButton(RowPressStyle(sound: false)) { model.activate(i) }
-                        .anchorPreference(key: SelectionAnchor.self, value: .bounds) { on ? $0 : nil }
-                        .onHover { inside in if inside { model.hover(i) } }
-                        }
+                            .contentShape(Rectangle())
+                            .asButton(RowPressStyle(sound: false)) { model.activate(i) }
+                            .onHover { inside in if inside { model.hover(i) } }
                     }
                 }
-                .backgroundPreferenceValue(SelectionAnchor.self) { anchor in
-                    GeometryReader { g in if let anchor { LiquidBlob(target: g[anchor], tint: ambient) } }
-                }
-                .padding(8)
+                .padding(Metric.inset)
             }
             .scrollIndicators(.never)
             .onChange(of: model.selection) { _, _ in
                 if model.selectedByHover { model.selectedByHover = false; return }
-                if let id = model.selectedID { withAnimation(Theme.snappy) { proxy.scrollTo(id) } }
+                if let id = model.selectedID { proxy.scrollTo(id) }
             }
-        }
-    }
-
-    /// Heading a run of results sits under: what kind they are, or the menu they're in while browsing an app.
-    private func section(_ hit: Hit) -> String {
-        if model.frequentIDs.contains(hit.id) { return "Frequently used" }
-        if model.suggesting, case .shortcut = hit { return "Suggested" }
-        switch hit {
-        case .answer: return "Answer"
-        case .app: return "Applications"
-        case .file: return "Files"
-        case .global: return "Shortcuts in other apps"
-        case .shortcut(let s):
-            if s.path.first == ElementScanner.marker { return "On screen" }
-            if s.path.first == LearnActions.group { return "Learn" }
-            if !model.query.isEmpty { return "Best matches" }   // ranked, so menus interleave
-            if s.path.first == SearchModel.settingsGroup, s.path.count > 2 { return s.path[1] }
-            return s.path.count > 1 ? s.path[0] : "Commands"
         }
     }
 
@@ -239,7 +170,7 @@ struct SearchView: View {
                 VStack(spacing: 3) {
                     Text("NEW SHORTCUT FOR").font(.app(10.5, .semibold)).tracking(0.8).foregroundStyle(.secondary)
                     Text(item.title).font(.app(18, .semibold))
-                    if !item.location.isEmpty { Text(Row.path(item.location)).font(.app(11.5)).foregroundStyle(.secondary) }
+                    if !item.location.isEmpty { Text(HitRow.path(item.location)).font(.app(11.5)).foregroundStyle(.secondary) }
                 }
                 Group {
                     if let rec = model.recordedShortcut {
@@ -282,118 +213,80 @@ struct SearchView: View {
             .transition(.scale(scale: 0.92).combined(with: .opacity))
         }
     }
-
-    // MARK: Footer
-
-    private var footer: some View {
-        HStack(spacing: 14) {
-            Text(model.notice ?? model.info)
-                .font(.app(11.5)).foregroundStyle(.secondary).lineLimit(1)
-                .contentTransition(.opacity)
-                .animation(.easeOut(duration: 0.2), value: model.notice)
-            Spacer(minLength: 8)
-            if model.currentApp == nil {
-                KeyHint(keys: "↩", label: "Open")
-                KeyHint(keys: "⌘↩", label: "Reveal")
-                KeyHint(keys: "⌘,", label: "Settings")
-            } else {
-                KeyHint(keys: "↩", label: "Run")
-                KeyHint(keys: Prefs.shared.recordKey.shortcut.display, label: "Set key")
-                if model.query.isEmpty {
-                    KeyHint(keys: "⇥", label: model.suggesting ? "Frequent" : "Suggested")
-                } else {
-                    KeyHint(keys: Prefs.shared.contextKey.shortcut.display, label: "Right-click")
-                }
-                KeyHint(keys: "⎋", label: "Back")
-            }
-        }
-        .padding(.horizontal, 16).frame(height: 38)
-    }
 }
 
 // MARK: Rows
 
-private enum Row {
+/// One Spotlight row: 36pt icon, title, grey subtitle, grey detail on the right (keys, where Spotlight shows a date).
+private struct HitRow: View {
+    let hit: Hit
+    let app: AppEntry?   // the app being browsed, if any
+
     static func path(_ s: String) -> String { s.replacingOccurrences(of: " ▸ ", with: " › ") }
 
-    static func title(_ s: String, _ size: CGFloat = 14) -> some View {
-        Text(s).font(.app(size, .medium)).lineLimit(1)
-    }
-    static func subtitle(_ s: String) -> some View {
-        Text(s).font(.app(11.5)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-    }
-    static func tag(_ s: String, color: Color = .secondary) -> some View {
-        Text(s).font(.app(10.5, .semibold)).foregroundStyle(color)
-            .padding(.horizontal, 7).padding(.vertical, 2.5)
-            .background(color.opacity(0.12), in: Capsule())
-    }
-    static func icon(_ image: NSImage) -> some View {
-        Image(nsImage: image).resizable().interpolation(.high).frame(width: 30, height: 30)
-    }
-}
-
-private struct AppRow: View {
-    let app: AppEntry
-    var body: some View {
-        HStack(spacing: 12) {
-            Row.icon(AppCatalog.icon(app))
-            Row.title(app.name, 14.5)
-            if app.runningApp != nil {
-                Circle().fill(.green.gradient).frame(width: 6, height: 6).help("Running")
-            }
-            Spacer()
-            if let e = ShortcutStore.shared.get(app.id) {
-                Text("\(e.shortcuts.count) commands").font(.app(11.5)).foregroundStyle(.tertiary).monospacedDigit()
-            }
+    static func title(_ hit: Hit) -> String {
+        switch hit {
+        case .shortcut(let s), .global(let s, _): s.title
+        case .app(let a): a.name
+        case .file(let f): f.name
+        case .answer(let a): a.title
         }
     }
-}
 
-private struct FileRow: View {
-    let f: FileHit
+    private var subtitle: String? {
+        switch hit {
+        case .shortcut(let s): s.location.isEmpty ? nil : Self.path(s.location)
+        case .global(let s, let a): Self.path(s.location.isEmpty ? a.name : "\(a.name) ▸ \(s.location)")
+        case .app: nil
+        case .file(let f):
+            ([f.lastUsed.map { $0.formatted(date: .numeric, time: .shortened) }, f.folder] as [String?]).compactMap { $0 }.joined(separator: " · ")
+        case .answer(let a): a.detail
+        }
+    }
+
+    private var detail: String? {
+        switch hit {
+        case .shortcut(let s), .global(let s, _):
+            let keys = s.hasKey ? s.display : HitIcon.kind(s).tag
+            return s.original != nil ? ["Custom", keys].compactMap { $0 }.joined(separator: " · ") : keys
+        case .file(let f): return f.score < 0 ? "Contents" : nil
+        case .answer(let a): return a.kind == .define ? "Dictionary" : nil
+        case .app: return nil
+        }
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
-            Row.icon(f.icon)
+        let define: Bool = if case .answer(let a) = hit, a.kind == .define { true } else { false }
+        HStack(alignment: define ? .top : .center, spacing: 14) {
+            HitIcon(hit: hit, app: app, size: 36)
             VStack(alignment: .leading, spacing: 1) {
-                Row.title(f.name)
-                Row.subtitle(f.folder)
+                if case .answer(let a) = hit, a.kind != .define {
+                    Text(a.title).font(.app(24, .medium)).textSelection(.enabled).lineLimit(1)
+                } else {
+                    Text(verbatim: Self.title(hit)).font(.app(17)).lineLimit(1)
+                }
+                if let subtitle {
+                    Text(verbatim: subtitle).font(.app(15)).foregroundStyle(.secondary)
+                        .lineLimit(define ? 3 : 1).truncationMode(.middle)
+                }
             }
-            Spacer()
-            if f.score < 0 { Row.tag("Contents") }
+            Spacer(minLength: 12)
+            if let detail { Text(verbatim: detail).font(.app(15)).foregroundStyle(.secondary).lineLimit(1) }
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, define ? 8 : 0)
     }
 }
 
-private struct AnswerRow: View {
-    let a: Answer
-    private var tile: (String, Color) {
-        switch a.kind {
-        case .calc: ("equal", .orange)
-        case .convert: ("arrow.left.arrow.right", .teal)
-        case .define: ("character.book.closed.fill", .brown)
-        }
-    }
-    var body: some View {
-        HStack(alignment: a.kind == .define ? .top : .center, spacing: 12) {
-            IconTile(symbol: tile.0, color: tile.1, size: 30)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(a.title)
-                    .font(.system(size: a.kind == .define ? 15 : 22, weight: .semibold, design: a.kind == .define ? .default : .rounded))
-                    .textSelection(.enabled)
-                Text(a.detail).font(.app(11.5)).foregroundStyle(.secondary).lineLimit(a.kind == .define ? 3 : 1)
-            }
-            Spacer()
-            if a.kind == .define { Row.tag("Dictionary") } else { KeyHint(keys: "↩", label: "Copy") }
-        }
-    }
-}
-
-private struct ShortcutRow: View {
-    let s: Shortcut
-    var app: AppEntry? = nil   // another app's shortcut found from anywhere: show its icon and name
+/// A hit's icon. Menu commands get Spotlight's treatment: a glyph for the kind of item, badged with its app's icon.
+private struct HitIcon: View {
+    let hit: Hit
+    let app: AppEntry?
+    let size: CGFloat
+    var badge = true
 
     /// Symbol + color for items without an app icon, by where they come from.
-    private var kind: (symbol: String, color: Color, tag: String?) {
+    static func kind(_ s: Shortcut) -> (symbol: String, color: Color, tag: String?) {
         switch s.path.first {
         case ElementScanner.marker: ("cursorarrow.rays", .blue, "On screen")
         case LearnActions.group: ("sparkles", .purple, "Learn")
@@ -414,20 +307,32 @@ private struct ShortcutRow: View {
         }
     }
 
+    private func image(_ ns: NSImage, _ side: CGFloat) -> some View {
+        Image(nsImage: ns).resizable().interpolation(.high).frame(width: side, height: side)
+    }
+
     var body: some View {
-        HStack(spacing: 12) {
-            if let app { Row.icon(AppCatalog.icon(app)) } else { IconTile(symbol: kind.symbol, color: kind.color, size: 26).padding(2) }
-            VStack(alignment: .leading, spacing: 1) {
-                Row.title(s.title)
-                let location = app.map { s.location.isEmpty ? $0.name : "\($0.name) ▸ \(s.location)" } ?? s.location
-                if !location.isEmpty { Row.subtitle(Row.path(location)) }
+        switch hit {
+        case .app(let a): image(AppCatalog.icon(a), size)
+        case .file(let f): image(f.icon, size)
+        case .answer(let a):
+            let tile: (String, Color) = switch a.kind {
+                case .calc: ("equal", .orange)
+                case .convert: ("arrow.left.arrow.right", .teal)
+                case .define: ("character.book.closed.fill", .brown)
             }
-            Spacer(minLength: 8)
-            if let orig = s.original {
-                Row.tag("Custom", color: .purple).help(orig.isEmpty ? "Set in Learn" : "Set in Learn · app's own: \(orig)")
+            IconTile(symbol: tile.0, color: tile.1, size: size * 0.86).frame(width: size, height: size)
+        case .shortcut(let s), .global(let s, _):
+            let owner: AppEntry? = if case .global(_, let a) = hit { a } else { app }
+            if !badge, let owner {
+                image(AppCatalog.icon(owner), size)
+            } else {
+                IconTile(symbol: Self.kind(s).symbol, color: Self.kind(s).color, size: size * 0.86)
+                    .frame(width: size, height: size)
+                    .overlay(alignment: .bottomTrailing) {
+                        if let owner { image(AppCatalog.icon(owner), size * 0.5).offset(x: 3, y: 3) }
+                    }
             }
-            if s.hasKey { Keycaps(display: s.display, size: 11.5) }
-            else if let tag = kind.tag { Row.tag(tag, color: kind.color) }
         }
     }
 }
@@ -436,4 +341,5 @@ private extension View {
     func asButton<S: ButtonStyle>(_ style: S, action: @escaping () -> Void) -> some View {
         Button(action: action) { self }.buttonStyle(style)
     }
+
 }

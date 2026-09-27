@@ -65,18 +65,6 @@ final class UsageStore {
         return out
     }
 
-    /// Most used items across every app: (app id, path), best first.
-    func topEverywhere(limit: Int) -> [(app: String, path: [String])] {
-        var all: [(app: String, path: [String], score: Double)] = []
-        for (app, items) in byApp {
-            for k in items.keys {
-                let path = k.components(separatedBy: "\u{1F}")
-                all.append((app, path, score(app: app, path: path)))
-            }
-        }
-        return all.filter { $0.score >= 0.5 }.sorted { $0.score > $1.score }.prefix(limit).map { (app: $0.app, path: $0.path) }
-    }
-
     private func scheduleSave() {
         saveWork?.cancel()
         let snapshot = byApp, file = file

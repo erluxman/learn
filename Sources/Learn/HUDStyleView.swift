@@ -34,6 +34,7 @@ struct HUDStyleSections: View {
         }
         Section("Box") {
             Picker("Background", selection: style.box) {
+                Text("Spotlight").tag(HUDStyle.Backdrop.spotlight)
                 Text("Solid").tag(HUDStyle.Backdrop.solid)
                 Text("Clear glass").tag(HUDStyle.Backdrop.glass)
                 Text("Colored glass").tag(HUDStyle.Backdrop.tinted)
@@ -60,7 +61,7 @@ struct HUDStyleSections: View {
                 Button("Show on Screen") { KeyHUD.shared.flash("⇧⌘T", caption: "Reopen Closed Tab", force: true) }
                     .glassButton()
                 Spacer()
-                Button("Reset to Defaults") { withAnimation(Theme.smooth) { prefs.hudStyle = HUDStyle() } }
+                Button("Reset to Spotlight Look") { withAnimation(Theme.smooth) { prefs.hudStyle = HUDStyle() } }
                     .disabled(prefs.hudStyle == HUDStyle())
             }
         }
@@ -77,7 +78,7 @@ struct HUDStyleSections: View {
         case .solid:
             ColorPicker("Color", selection: lookColor(look), supportsOpacity: false)
             slider("Opacity", look.opacity, 0...1, "%.0f%%", percent: true)
-        case .glass:
+        case .spotlight, .glass:
             slider("Darken", look.darken, 0...0.9, "%.0f%%", percent: true)
         case .tinted:
             ColorPicker("Glass color", selection: lookColor(look), supportsOpacity: false)
@@ -106,7 +107,7 @@ struct HUDStyleSections: View {
     }
 
     static func name(_ b: HUDStyle.Backdrop) -> String {
-        switch b { case .solid: "Solid"; case .glass: "Clear glass"; case .tinted: "Colored glass"; case .frosted: "Blurred" }
+        switch b { case .spotlight: "Spotlight"; case .solid: "Solid"; case .glass: "Clear glass"; case .tinted: "Colored glass"; case .frosted: "Blurred" }
     }
 
     private func lookColor(_ look: SwiftUI.Binding<HUDStyle.BoxLook>) -> SwiftUI.Binding<Color> {
@@ -205,6 +206,11 @@ private struct BubbleBox<S: InsettableShape>: ViewModifier {
             switch st.box {
             case .solid:
                 content.background(color.opacity(look.opacity), in: shape)
+            case .spotlight:
+                if #available(macOS 26, *) {
+                    content.glassEffect(Glass.regular.tint(look.darken > 0 ? .black.opacity(look.darken) : nil), in: shape)
+                        .environment(\.colorScheme, st.textColor.ns.brightnessComponentSafe > 0.5 ? .dark : .light)
+                } else { content.background(.regularMaterial, in: shape) }
             case .glass:
                 if #available(macOS 26, *) {
                     content.glassEffect(Glass.clear.tint(look.darken > 0 ? .black.opacity(look.darken) : nil), in: shape)

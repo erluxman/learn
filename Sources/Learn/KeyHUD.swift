@@ -6,8 +6,9 @@ struct HUDStyle: Codable, Hashable {
         case topLeft, topCenter, topRight, middleLeft, center, middleRight, bottomLeft, bottomCenter, bottomRight
     }
     enum Motion: String, Codable, CaseIterable { case jelly, fade, slide, pop, none }
-    /// What the box is made of. `tinted` = Liquid Glass colored by `background`; `frosted` = blur + `background` on top.
-    enum Backdrop: String, Codable, CaseIterable { case solid, glass, tinted, frosted }
+    /// What the box is made of. `spotlight` = Spotlight's plain dark Liquid Glass; `tinted` = Liquid Glass colored by
+    /// `background`; `frosted` = blur + `background` on top.
+    enum Backdrop: String, Codable, CaseIterable { case spotlight, solid, glass, tinted, frosted }
     struct RGBA: Codable, Hashable {
         var r, g, b, a: Double
         init(_ c: NSColor) {
@@ -20,17 +21,17 @@ struct HUDStyle: Codable, Hashable {
     var position = Position.bottomCenter
     var margin = 64.0                 // distance from the screen edge
     var font = ""                     // "" system · ".rounded" · ".mono" · a font family name
-    var bold = true
-    var keySize = 30.0
-    var captionSize = 14.0
+    var bold = false                  // Spotlight's text is regular weight
+    var keySize = 26.0                // Spotlight's search text
+    var captionSize = 15.0            // Spotlight's subtitles
     var showCaption = true            // the command name under the keys
     var textColor = RGBA(.white)
     var background = RGBA(NSColor(white: 0.1, alpha: 0.55))
     var frosted = true                // before `backdrop` existed: blur what's behind, tinted by `background`
-    var backdrop: Backdrop? = .tinted // nil in styles saved before it existed → derived from `frosted`
-    var cornerRadius = 14.0
-    var paddingH = 22.0
-    var paddingV = 10.0
+    var backdrop: Backdrop? = .spotlight // nil in styles saved before it existed → derived from `frosted`
+    var cornerRadius = 26.0
+    var paddingH = 24.0
+    var paddingV = 12.0
     var shadow = true
     var duration = 1.4                // seconds on screen
     var motion = Motion.jelly
@@ -55,6 +56,7 @@ struct HUDStyle: Codable, Hashable {
 
     func defaultLook(_ b: Backdrop) -> BoxLook {
         switch b {
+        case .spotlight: BoxLook(color: RGBA(.black), opacity: 0, shine: 0.2)
         case .solid: BoxLook(color: RGBA(background.ns.withAlphaComponent(1)), opacity: max(background.a, 0.85), shine: 0.15)
         case .glass: BoxLook(color: RGBA(.white), opacity: 0, darken: 0.1, shine: 0.45)
         case .tinted: BoxLook(color: RGBA(background.ns.withAlphaComponent(1)), opacity: 0.55, shine: 0.4)
@@ -356,7 +358,7 @@ final class KeyHUD {
         let look = st.current
         var root: NSView
         switch st.box {
-        case .glass, .tinted:
+        case .spotlight, .glass, .tinted:
             if #available(macOS 26, *) {
                 let glass = NSGlassEffectView()
                 glass.style = st.box == .glass ? .clear : .regular
@@ -365,7 +367,7 @@ final class KeyHUD {
                 content.wantsLayer = true
                 content.layer?.cornerRadius = st.cornerRadius
                 content.layer?.cornerCurve = .continuous
-                if st.box == .glass {
+                if st.box != .tinted {
                     if look.darken > 0 { glass.tintColor = NSColor.black.withAlphaComponent(look.darken) }
                 } else {   // the glass's own tint is faint, so the color also washes the inside of the glass
                     glass.tintColor = look.color.ns.withAlphaComponent(look.opacity)
@@ -443,7 +445,7 @@ extension HUDStyle.BoxLook {
     }
 }
 
-private extension NSColor {
+extension NSColor {
     var brightnessComponentSafe: CGFloat { (usingColorSpace(.sRGB) ?? .white).brightnessComponent }
 }
 

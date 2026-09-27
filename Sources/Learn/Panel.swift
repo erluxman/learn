@@ -5,7 +5,7 @@ import SwiftUI
 final class Panel: NSPanel, NSWindowDelegate {
     init(model: SearchModel) {
         let m = JellyMotion.margin   // clear room around the glass so it can wobble when dragged
-        super.init(contentRect: NSRect(x: 0, y: 0, width: 720 + 2 * m, height: 480 + 2 * m),
+        super.init(contentRect: NSRect(x: 0, y: 0, width: 720 + 2 * m, height: 520 + 2 * m),
                    styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
                    backing: .buffered, defer: false)
         isFloatingPanel = true

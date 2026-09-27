@@ -181,7 +181,6 @@ final class SearchModel: ObservableObject {
             let browsing = query.isEmpty && app != Self.settingsEntry
             let picked = !browsing ? [] : suggesting ? RelevanceStore.shared.suggestions(menus, app: app.id, limit: 12)
                                                      : UsageStore.shared.top(shortcuts, app: app.id, limit: 8)
-            frequentIDs = suggesting ? [] : Set(picked.map { Hit.shortcut($0).id })
             results = top + (browsing ? picked : shortcuts).map(Hit.shortcut) + elsewhere + rest
             scanning = Scanner.shared.busy.contains(app.id) && !quietScans.contains(app.id)
             if scanning { info = "Scanning \(app.name)…" }
@@ -198,9 +197,8 @@ final class SearchModel: ObservableObject {
             // Apps named like the query first, then every app's matching shortcuts, then looser app matches.
             let strong = query.isEmpty ? apps : apps.filter { Fuzzy.rank(query, title: $0.name) ?? 0 >= 6_000 }
             let weak = query.isEmpty ? [] : apps.filter { Fuzzy.rank(query, title: $0.name) ?? 0 < 6_000 }
-            let frequent = query.isEmpty ? frequentEverywhere() : []
-            frequentIDs = Set(frequent.map(\.id))
-            results = top + frequent + strong.map(Hit.app) + global + weak.map(Hit.app) + rest
+            // Like Spotlight: nothing typed, nothing listed — the panel is just the search field.
+            results = query.isEmpty ? [] : top + strong.map(Hit.app) + global + weak.map(Hit.app) + rest
             info = "\(apps.count) apps\(global.isEmpty ? "" : " · \(global.count) shortcuts")\(files.isEmpty ? "" : " · \(files.count) files")"
         }
         if !keepSelection || selection >= count { selection = 0 }
@@ -213,19 +211,6 @@ final class SearchModel: ObservableObject {
         suggesting.toggle()
         recompute()
         return true
-    }
-
-    /// Rows shown under "Frequently used" (ids of `results`).
-    private(set) var frequentIDs = Set<String>()
-
-    /// Your most used shortcuts across apps, for the top level with nothing typed.
-    private func frequentEverywhere() -> [Hit] {
-        let apps = Dictionary(allApps.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        return UsageStore.shared.topEverywhere(limit: 12).compactMap { use in
-            guard let app = apps[use.app],
-                  let s = ShortcutStore.shared.get(use.app)?.shortcuts.first(where: { $0.path == use.path }) else { return nil }
-            return Hit.global(s, app)
-        }.prefix(6).map { $0 }
     }
 
     private func rankedApps() -> [AppEntry] {

@@ -13,7 +13,7 @@ system + app changes; per-app "Refresh".
 | `AppDelegate.swift` | wiring: hotkey, panel, watchers, status-bar menu, reopen handling |
 | `HotKey.swift` | global hotkey via Carbon `RegisterEventHotKey` (default ⌥Space) |
 | `Panel.swift` | borderless floating `NSPanel`, Esc/click-away closes |
-| `SearchView.swift` | SwiftUI: search field + list; two modes: apps → shortcuts |
+| `SearchView.swift` | SwiftUI, native Spotlight look (macOS 26): one plain glass shape, 640pt wide — 54pt search pill when nothing typed, grows into 56pt rows (36pt icon, 17pt title, 15pt grey subtitle, keys as grey text on the right), inline "— top hit" tag after the typed text, top-hit icon on the right. No header/footer/section titles; glass/font from Settings ▸ Appearance (defaults = Spotlight). Two modes: apps → shortcuts |
 | `Models.swift` | `AppEntry`, `Shortcut` (menu path, key, modifiers, source) |
 | `AppCatalog.swift` | enumerate `.app` in /Applications, /System/Applications(+Utilities), ~/Applications, /System/Library/CoreServices (Finder) |
 | `MenuScanner.swift` | Accessibility API: walk `AXMenuBar` → every item with `AXMenuItemCmdChar/VirtualKey/Modifiers` |
@@ -27,12 +27,12 @@ system + app changes; per-app "Refresh".
 | `SpotlightKey.swift` | optional ⌘Space takeover: rewrites Spotlight's symbolichotkeys #64 (off, or moved to ⌥Space) + `activateSettings -u`; uninstall.sh restores |
 | `Answers.swift` | instant answers in top-level search: calculator (own parser, no NSExpression), unit conversions (Measurement), definitions (DCSCopyTextDefinition) |
 | `FileSearch.swift` | home-folder file search via NSMetadataQuery (Spotlight index); icons from UTI so no folder-access prompts |
-| `HUDStyleView.swift` | `HUDStyleSections`: shortcut bubble look, embedded in Settings ▸ On Screen; live mini-screen preview (tap a spot = position), font, sizes, colors, frosted (Liquid Glass), padding, corners, shadow, duration, fade/slide/pop/none. Stored as `HUDStyle` JSON in prefs |
+| `HUDStyleView.swift` | `HUDStyleSections`: shortcut bubble look, embedded in Settings ▸ On Screen; live mini-screen preview (tap a spot = position), backdrop (default "Spotlight": plain dark Liquid Glass, SF 26/15pt, radius 26), font, sizes, colors, frosted (Liquid Glass), padding, corners, shadow, duration, fade/slide/pop/none. Stored as `HUDStyle` JSON in prefs |
 | `Usage.swift` | `UsageStore`: per-app use counts (run from Learn or pressed in the app, via the key tap), 2-week half-life → "Frequently used" rows at the top of an app's list / the top level. Saved in `usage.json` |
 | `Relevance.swift` | `RelevanceStore`: on-device relevance per shortcut, recomputed after every scan — NLEmbedding similarity to a sample of always-useful commands, prevalence across your apps, your use elsewhere, key simplicity, menu depth, app "signature" keys; basics/housekeeping sink. ⇥ on an empty search shows the top 12 as "Suggested" |
 | `Sounds.swift` | click + shortcut-run sounds (Settings ▸ Sounds): 7 synthesized in code (WAV in memory, no files) + macOS system sounds; volume. Clicks: liquid/row/glass buttons, toggles; runs: Executor, custom bindings, on-screen items, answer copy |
 | `ThemeDesigner.swift` | Arc-style theme designer (Settings ▸ Appearance ▸ Theme): hue/saturation wheel with 1–3 draggable dots (first turns the rest), intensity, darkness, grain, presets, shuffle. Glass is tinted with the colors' blend; 2–3 colors add a light gradient sheen + optional tiled grain on the glass |
-| `Texture.swift` | Settings ▸ Appearance ▸ Glass & texture: `BlurStyle` (Liquid Glass ×2, SwiftUI materials ×5, AppKit behind-window ×10, none) + amount; `GrainStyle` (11 generated seamless tiles, each with its blend) + amount + size |
+| `Texture.swift` | Settings ▸ Appearance ▸ Glass & texture (Glass: Liquid | Frosted switch + Opacity for every blur; defaults = Spotlight, "Reset to Spotlight Look"): `BlurStyle` (Liquid Glass ×2, SwiftUI materials ×5, AppKit behind-window ×10, none) + amount; `GrainStyle` (11 generated seamless tiles, each with its blend) + amount + size |
 | `Theme.swift` | design system: radii, springs, `liquidGlass(in:)` (macOS 26 glass, material fallback), `GlassGroup`, `Keycaps`, `IconTile`, `KeyHint` |
 | `SettingsView.swift` | sidebar Settings (Permissions · Hotkeys · Learn Panel · On Screen · Search · Advanced · My Shortcuts), hero per pane, `KeyRecorder` |
 | `Fuzzy.swift` | tiny fuzzy scorer (subsequence + prefix bonus) |

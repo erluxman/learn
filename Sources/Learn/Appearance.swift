@@ -30,7 +30,7 @@ struct Appearance: Codable, Equatable {
     var shortcutSound: SoundEffect { shortcutSoundChoice ?? .pop }
     var soundVolume: Double { soundVolumeChoice ?? 0.5 }
 
-    static let defaultFont = ".rounded"
+    static let defaultFont = ""   // SF Pro, as Spotlight
     var font: String { fontChoice ?? Self.defaultFont }
     /// System designs go through SwiftUI's font design; a family name is used as a custom font.
     var fontDesign: Font.Design? {

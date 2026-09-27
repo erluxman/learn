@@ -100,6 +100,7 @@ private struct SettingsRoot: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipShape(shape)
             .liquidGlass(in: shape)
+            .glassRim(shape)
             .overlay(alignment: .top) { WindowDragArea().frame(height: 40) }   // title strip: the only place that moves the window
             .overlay(alignment: .topLeading) { TrafficLights(window: window).padding(.top, 18).padding(.leading, 20) }
             .background {   // ⌘W closes, like any window
@@ -402,9 +403,27 @@ private struct AppearancePane: View {
                     .font(.app(11.5)).foregroundStyle(.secondary)
             }
             Section {
+                SettingRow(title: "Glass", detail: "Liquid is Spotlight's glass. Frosted is a Gaussian blur that lets more of the screen through.",
+                           symbol: "square.stack.3d.up.fill", color: .indigo) {
+                    VStack(alignment: .trailing, spacing: 8) {
+                        Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.blur.isLiquid }, set: { liquid in
+                            guard liquid != prefs.appearance.blur.isLiquid else { return }
+                            prefs.appearance.blurStyleChoice = liquid ? .liquidRegular : .gaussian
+                            prefs.appearance.blurRadiusChoice = nil
+                            prefs.appearance.blurSaturationChoice = nil
+                        })) {
+                            Text("Liquid glass").tag(true)
+                            Text("Frosted glass").tag(false)
+                        }
+                        .pickerStyle(.segmented).labelsHidden().frame(width: 230)
+                        amount(SwiftUI.Binding(get: { prefs.appearance.blurAmount }, set: { prefs.appearance.blurAmountChoice = $0 }),
+                               label: "Opacity")
+                            .disabled(prefs.appearance.blur == .none)
+                    }
+                }
                 SettingRow(title: "Blur", detail: prefs.appearance.blur.isTunable
                            ? "A true Gaussian blur of what's behind. Radius sets how soft; saturation how vivid the colors come through."
-                           : "What's behind every surface. macOS fixes this blur's strength, so the slider fades it in or out.",
+                           : "Every blur Learn can draw. macOS fixes this one's strength; Opacity above fades it in or out.",
                            symbol: "drop.halffull", color: .cyan) {
                     VStack(alignment: .trailing, spacing: 8) {
                         Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.blur }, set: { style in
@@ -425,10 +444,6 @@ private struct AppearancePane: View {
                                    range: 0...BlurStyle.maxRadius, label: "Radius", format: { String(format: "%.1f pt", $0) })
                             amount(SwiftUI.Binding(get: { prefs.appearance.blurSaturation }, set: { prefs.appearance.blurSaturationChoice = $0 }),
                                    range: 0...2.5, label: "Saturation", format: { String(format: "%.1f×", $0) })
-                        } else {
-                            amount(SwiftUI.Binding(get: { prefs.appearance.blurAmount }, set: { prefs.appearance.blurAmountChoice = $0 }),
-                                   label: "Opacity")
-                                .disabled(prefs.appearance.blur == .none)
                         }
                     }
                 }
@@ -519,7 +534,7 @@ private struct AppearancePane: View {
             Section {
                 HStack {
                     Spacer()
-                    Button("Reset to Defaults") { withAnimation(Theme.smooth) { prefs.appearance = Appearance() } }
+                    Button("Reset to Spotlight Look") { withAnimation(Theme.smooth) { prefs.appearance = Appearance() } }
                         .glassButton()
                         .disabled(prefs.appearance == Appearance())
                 }

@@ -24,6 +24,11 @@ extension View {
         modifier(GlassSurface(shape: shape, tint: tint, interactive: interactive))
     }
 
+    /// Spotlight's thin light rim around a glass surface.
+    func glassRim<S: InsettableShape>(_ shape: S) -> some View {
+        overlay(shape.strokeBorder(Color.white.opacity(0.14), lineWidth: 1).allowsHitTesting(false))
+    }
+
     /// Morphs between glass shapes sharing a namespace (macOS 26); no-op before.
     @ViewBuilder
     func glassID(_ id: String?, in ns: Namespace.ID?) -> some View {
@@ -113,7 +118,7 @@ private struct GlassSurface<S: Shape>: ViewModifier {
                     }
                 }
             }
-            .opacity(blur.isTunable ? 1 : look.blurAmount)
+            .opacity(look.blurAmount)
             if !blur.isLiquid, let tint { shape.fill(tint) }   // only glass can carry a tint itself; elsewhere it's the color on top
         }
     }
