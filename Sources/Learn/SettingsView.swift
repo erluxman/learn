@@ -8,7 +8,7 @@ final class SettingsWindow {
     var isFront: Bool { window?.isKeyWindow == true && NSApp.isActive }
 
     enum Tab: String, Hashable, CaseIterable, Identifiable {
-        case permissions, appearance, sounds, hotkeys, panel, display, search, advanced, shortcuts
+        case permissions, appearance, sounds, hotkeys, panel, display, search, advanced, shortcuts, cleaner
         var id: Self { self }
         var title: String {
             switch self {
@@ -21,6 +21,7 @@ final class SettingsWindow {
             case .search: "Search"
             case .advanced: "Advanced"
             case .shortcuts: "My Shortcuts"
+            case .cleaner: "Cleaner"
             }
         }
         var subtitle: String {
@@ -34,6 +35,7 @@ final class SettingsWindow {
             case .search: "What shows up when you type."
             case .advanced: "Shortcut database, scanning and diagnostics."
             case .shortcuts: "Shortcuts you recorded in Learn. They work without touching the apps' own settings."
+            case .cleaner: "Clean up, protect and speed up your Mac — in its own window."
             }
         }
         var symbol: String {
@@ -47,6 +49,7 @@ final class SettingsWindow {
             case .search: "magnifyingglass"
             case .advanced: "wrench.and.screwdriver.fill"
             case .shortcuts: "keyboard.fill"
+            case .cleaner: "sparkles"
             }
         }
         var color: Color {
@@ -60,6 +63,7 @@ final class SettingsWindow {
             case .search: .teal
             case .advanced: .gray
             case .shortcuts: .orange
+            case .cleaner: .pink
             }
         }
     }
@@ -74,7 +78,7 @@ final class SettingsWindow {
     func show(_ tab: Tab? = nil) {
         if let tab { selection.tab = tab }
         if window == nil {
-            let w = GlassWindow(size: NSSize(width: 880, height: 640), minSize: NSSize(width: 760, height: 480))
+            let w = GlassWindow(size: NSSize(width: 880, height: 640), minSize: NSSize(width: 760, height: 480), margin: 64)
             w.title = Self.title
             let host = NSHostingView(rootView: AppearanceRoot { SettingsRoot(selection: selection, window: w) })
             host.sizingOptions = []   // the window sets the size; the glass fills it
@@ -98,9 +102,12 @@ private struct SettingsRoot: View {
         let shape = RoundedRectangle(cornerRadius: look.radius, style: .continuous)
         SettingsView(selection: selection)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background { if look.surface != .glass { SettingsBackdrop(tab: selection.tab) } }
+            .background(WindowDragArea())   // any empty spot moves the window
             .clipShape(shape)
-            .liquidGlass(in: shape)
-            .glassRim(shape)
+            .modifier(SurfaceFinish(shape: shape, glass: look.surface == .glass))
+            .onAppear { window.appearance = look.surface == .glass ? nil : NSAppearance(named: .darkAqua) }
+            .onChange(of: look.surface) { _, s in window.appearance = s == .glass ? nil : NSAppearance(named: .darkAqua) }
             .overlay(alignment: .top) { WindowDragArea().frame(height: 40) }   // title strip: the only place that moves the window
             .overlay(alignment: .topLeading) { TrafficLights(window: window).padding(.top, 18).padding(.leading, 20) }
             .background {   // ⌘W closes, like any window
@@ -108,7 +115,36 @@ private struct SettingsRoot: View {
             }
             .shadow(color: .black.opacity(0.6 * look.shadow), radius: 36 * look.shadow, y: 20 * look.shadow)
             .modifier(Jelly(motion: window.motion))
-            .padding(JellyMotion.margin)
+            .padding(window.margin)
+    }
+}
+
+/// Gradient surfaces: the page's own color (Cleaner-style) or the theme's colors, with the grain laid on top.
+private struct SettingsBackdrop: View {
+    let tab: SettingsWindow.Tab
+    @Environment(\.appearance) private var look
+    var body: some View {
+        ZStack {
+            // One surface that changes color in place (Core Animation fades the colors): a crossfade of two surfaces
+            // would be half see-through midway, letting the desktop show through.
+            if look.surface == .theme { SurfaceBackdrop(colors: look.themeColors.map { Color(nsColor: $0.ns) }) }
+            else { SurfaceBackdrop(color: tab.color) }
+            if look.grain > 0, let tile = look.grainStyle.tile(scale: look.grainScale, color: look.grainColor) {
+                Image(nsImage: tile).resizable(resizingMode: .tile)
+                    .opacity(look.grain * look.grainStyle.strength).blendMode(look.grainStyle.blend(colored: look.grainColor != nil))
+            }
+        }
+        .allowsHitTesting(false)
+    }
+}
+
+/// Glass surface (blur, tint and rim from Appearance) or, over a gradient, just a fine light edge.
+private struct SurfaceFinish<S: InsettableShape>: ViewModifier {
+    let shape: S
+    let glass: Bool
+    func body(content: Content) -> some View {
+        if glass { content.liquidGlass(in: shape).glassRim(shape) }
+        else { content.overlay(shape.strokeBorder(.white.opacity(0.12), lineWidth: 0.75)) }
     }
 }
 
@@ -118,11 +154,22 @@ struct SettingsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            Sidebar(selection: selection)
-                .frame(width: 236)
-                // concentric with the window: inner radius = outer radius − inset
-                .overlay(RoundedRectangle(cornerRadius: max(look.radius - 8, 6), style: .continuous).strokeBorder(Theme.hairline))
-                .padding(8)
+            if look.surface == .glass {
+                Sidebar(selection: selection)
+                    .frame(width: 236)
+                    // concentric with the window: inner radius = outer radius − inset
+                    .overlay(RoundedRectangle(cornerRadius: max(look.radius - 8, 6), style: .continuous).strokeBorder(Theme.hairline))
+                    .padding(8)
+            } else {   // on a gradient the sidebar is part of the surface; a hairline that fades at both ends is all that parts it
+                Sidebar(selection: selection)
+                    .frame(width: 236)
+                    .padding(.vertical, 8).padding(.leading, 8)
+                    .overlay(alignment: .trailing) {
+                        LinearGradient(colors: [.white.opacity(0), .white.opacity(0.13), .white.opacity(0.13), .white.opacity(0)],
+                                       startPoint: .top, endPoint: .bottom)
+                            .frame(width: 1).padding(.vertical, 90)
+                    }
+            }
             Group {
                 switch selection.tab {
                 case .permissions: PermissionsPane()
@@ -134,11 +181,12 @@ struct SettingsView: View {
                 case .search: SearchPane()
                 case .advanced: AdvancedPane()
                 case .shortcuts: ShortcutsPane()
+                case .cleaner: CleanerPane()
                 }
             }
             .id(selection.tab)
-            .transition(.opacity.combined(with: .offset(y: 8)))
-            .animation(Theme.smooth, value: selection.tab)
+            .transition(.blurFade)   // the page frosts over and the next one clears in; the surface stays solid
+            .animation(.easeInOut(duration: 0.42), value: selection.tab)   // the Cleaner's timing
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .ignoresSafeArea()
@@ -148,8 +196,9 @@ struct SettingsView: View {
 /// Sidebar: rows light up under the pointer; the selection is a pill of the section's color that flows between rows.
 private struct Sidebar: View {
     @ObservedObject var selection: TabSelection
+    @Environment(\.appearance) private var look
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 7) {
             ForEach(SettingsWindow.Tab.allCases) { t in
                 SidebarRow(tab: t, selected: selection.tab == t) { selection.tab = t }
                     .anchorPreference(key: SelectionAnchor.self, value: .bounds) { selection.tab == t ? $0 : nil }
@@ -157,9 +206,28 @@ private struct Sidebar: View {
             Spacer()
         }
         .backgroundPreferenceValue(SelectionAnchor.self) { anchor in
-            GeometryReader { g in if let anchor { LiquidBlob(target: g[anchor], tint: selection.tab.color) } }
+            GeometryReader { g in
+                if let anchor {
+                    if look.surface == .glass { LiquidBlob(target: g[anchor], tint: selection.tab.color) }
+                    else { SelectionPill(target: g[anchor]) }
+                }
+            }
         }
         .padding(.top, 44).padding(.horizontal, 10).padding(.bottom, 12)
+    }
+}
+
+/// The Cleaner's selection pill (frosted, light top edge), sliding to the selected row on a soft spring.
+private struct SelectionPill: View {
+    let target: CGRect
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+        shape.fill(.white.opacity(0.13))
+            .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.08)], startPoint: .top, endPoint: .bottom), lineWidth: 1))
+            .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
+            .frame(width: target.width, height: target.height)
+            .position(x: target.midX, y: target.midY)
+            .animation(.spring(response: 0.45, dampingFraction: 0.78), value: target)
     }
 }
 
@@ -167,24 +235,63 @@ private struct SidebarRow: View {
     let tab: SettingsWindow.Tab
     let selected: Bool
     let action: () -> Void
+    @Environment(\.appearance) private var look
     @State private var hover = false
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous)
         Button(action: action) {
             HStack(spacing: 11) {
-                IconTile(symbol: tab.symbol, color: tab.color, size: 30)
-                    .scaleEffect(hover && !selected ? 1.08 : 1)
-                    .rotationEffect(.degrees(hover && !selected ? -4 : 0))
+                icon
+                    .animation(Self.morph, value: selected)
+                    .keyframeAnimator(initialValue: CGSize(width: 1, height: 1), trigger: selected) { v, s in
+                        v.scaleEffect(x: s.width, y: s.height)
+                    } keyframes: { _ in
+                        // Selected: swell, squash, settle — a small jelly bounce as the color flows in. Deselected: a soft dip.
+                        KeyframeTrack(\.width) {
+                            if selected {
+                                SpringKeyframe(1.2, duration: 0.16, spring: .snappy); SpringKeyframe(0.9, duration: 0.14)
+                                SpringKeyframe(1.05, duration: 0.14); SpringKeyframe(1, duration: 0.3, spring: .smooth)
+                            } else {
+                                SpringKeyframe(0.88, duration: 0.14); SpringKeyframe(1, duration: 0.35, spring: .bouncy)
+                            }
+                        }
+                        KeyframeTrack(\.height) {
+                            if selected {
+                                SpringKeyframe(1.12, duration: 0.16, spring: .snappy); SpringKeyframe(1.08, duration: 0.14)
+                                SpringKeyframe(0.97, duration: 0.14); SpringKeyframe(1, duration: 0.3, spring: .smooth)
+                            } else {
+                                SpringKeyframe(0.88, duration: 0.14); SpringKeyframe(1, duration: 0.35, spring: .bouncy)
+                            }
+                        }
+                    }
                 Text(tab.title).font(.app(14, selected ? .semibold : .medium))
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 9).padding(.vertical, 7)
-            .background(shape.fill(Theme.highlight.opacity(hover && !selected ? 0.6 : 0)))
-            .pointerLight(shape, strength: 0.7, radius: 110)
+            .padding(.horizontal, 9).padding(.vertical, 6)
             .contentShape(shape)
+            .rowHover()
+
         }
         .buttonStyle(RowPressStyle())
         .onHover { h in withAnimation(Theme.bouncy) { hover = h } }
+    }
+
+    /// The color flow between looks: the Cleaner's 0.42 s, on a spring so it eases in and settles organically.
+    static let morph = Animation.spring(duration: 0.45, bounce: 0.15)
+
+    /// Frosted ↔ 3D glass is one icon whose glass changes color (exactly the Cleaner's morph); other style pairs
+    /// cross-fade on the same timing.
+    @ViewBuilder private var icon: some View {
+        if look.idleIconStyle == .frosted && look.iconStyle == .slab {
+            GlassSlab(symbol: tab.symbol, color: tab.color, size: 30, frosted: !selected).modifier(IconHover(size: 30))
+        } else {
+            ZStack {   // other style pairs: the new look blooms out of the old one
+                IconTile(symbol: tab.symbol, color: tab.color, size: 30, style: look.idleIconStyle)
+                    .opacity(selected ? 0 : 1).scaleEffect(selected ? 0.8 : 1)
+                IconTile(symbol: tab.symbol, color: tab.color, size: 30, style: look.iconStyle)
+                    .opacity(selected ? 1 : 0).scaleEffect(selected ? 1 : 0.8)
+            }
+        }
     }
 }
 
@@ -194,30 +301,35 @@ private struct SidebarRow: View {
 private struct Pane<Content: View>: View {
     let tab: SettingsWindow.Tab
     @ViewBuilder let content: Content
+    @Environment(\.appearance) private var look
     var body: some View {
-        Form {
-            Section {} header: {
-                HStack(spacing: 8) {
-                    HeroIcon(symbol: tab.symbol, color: tab.color, size: 64).padding(-16)
-                    VStack(alignment: .leading, spacing: 3) {
-                        Text(tab.title).font(.app(26, .bold))
-                        Text(tab.subtitle).font(.app(13)).foregroundStyle(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
+        // The hero stays put so you always know which page you're on; only the form below it scrolls.
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 10) {
+                HeroIcon(symbol: tab.symbol, color: tab.color, size: 84).padding(-20)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(tab.title).font(.app(26, .bold))
+                    Text(tab.subtitle).font(.app(13)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .textCase(nil)
-                .foregroundStyle(.primary)
-                .padding(.bottom, 4)
+                .allowsHitTesting(false)   // clicks and scrolls on the text reach the drag area behind
             }
-            content
+            .padding(.leading, 34).padding(.trailing, 24).padding(.top, 48).padding(.bottom, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // Behind the header: dragging it moves the window, scrolling on it scrolls the form; the icon keeps its hover.
+            .background(WindowDragArea(forwardsScroll: true))
+            Form { content }
+                .formStyle(.grouped)
+                .scrollContentBackground(.hidden)
+                .contentMargins(.bottom, 20, for: .scrollIndicators)   // keep the scroller clear of the rounded corner
         }
-        .formStyle(.grouped)
-        .scrollContentBackground(.hidden)
-        .background(alignment: .top) {   // the section's color washes in from the top, like light through tinted glass
-            LinearGradient(colors: [tab.color.opacity(0.16), tab.color.opacity(0)], startPoint: .top, endPoint: .bottom)
-                .frame(height: 280)
-                .ignoresSafeArea()
-                .allowsHitTesting(false)
+        .background(alignment: .top) {   // on glass, the section's color washes in from the top, like light through tinted glass
+            if look.surface == .glass {
+                LinearGradient(colors: [tab.color.opacity(0.16), tab.color.opacity(0)], startPoint: .top, endPoint: .bottom)
+                    .frame(height: 280)
+                    .ignoresSafeArea()
+                    .allowsHitTesting(false)
+            }
         }
     }
 }
@@ -234,7 +346,7 @@ struct SettingRow<Control: View>: View {
         let shape = RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous)
         // Icon, text and control all centred on one line, so a slider sits level with its title block, not its first baseline.
         HStack(alignment: .center, spacing: 12) {
-            if let symbol { IconTile(symbol: symbol, color: color, size: 32).scaleEffect(hover ? 1.06 : 1) }
+            if let symbol { IconTile(symbol: symbol, color: color, size: 32) }
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.app(13.5, .medium))
                 if let detail {
@@ -245,10 +357,9 @@ struct SettingRow<Control: View>: View {
             control.fixedSize()   // keeps its own width; the text wraps instead
         }
         .padding(.vertical, 6).padding(.horizontal, 10)
-        // A flat wash of the row's own color, not a second pane of glass on the card's glass.
-        .background(shape.fill(color.opacity(hover ? 0.14 : 0)))
-        .pointerLight(shape, strength: 0.6, radius: 180)
-        .padding(.horizontal, -4)   // highlight inset from the card's sides about as much as from its top and bottom
+        .contentShape(shape)
+        .rowHover()   // anywhere on the row: the row comes forward softly, its icon swells and tilts
+        .padding(.horizontal, -4)
         .onHover { h in withAnimation(Theme.bouncy) { hover = h } }
     }
 }
@@ -344,7 +455,7 @@ private struct PermissionsPane: View {
                     _ = CGRequestListenEventAccess(); openPane("Privacy_ListenEvent")
                 }
                 ToggleRow(title: "Launch at login",
-                          detail: "Start Learn automatically so \(Prefs.shared.panelKey.shortcut.display) always works.",
+                          detail: "Start Learn automatically so \(Prefs.shared.panelKey.shortcut.display.macKeyWords) always works.",
                           symbol: "power", color: .green,
                           isOn: SwiftUI.Binding(get: { login }, set: { on in
                               let svc = SMAppService.mainApp
@@ -385,6 +496,23 @@ private struct PermissionRow: View {
     }
 }
 
+// MARK: Cleaner
+
+/// Opens the Cleaner window (it has its own window, like a separate app); this page is its launcher.
+private struct CleanerPane: View {
+    var body: some View {
+        Pane(tab: .cleaner) {
+            Section {
+                SettingRow(title: "Open Cleaner", detail: "Smart Care, Cleanup, Protection, Performance, Applications, My Clutter and Space Lens.",
+                           symbol: "sparkles", color: .pink) {
+                    Button("Open") { CleanerWindow.shared.show() }.glassButton(prominent: true)
+                }
+            }
+        }
+        .onAppear { CleanerWindow.shared.show() }   // clicking the tab opens the window straight away
+    }
+}
+
 // MARK: Appearance
 
 private struct AppearancePane: View {
@@ -401,6 +529,23 @@ private struct AppearancePane: View {
             } footer: {
                 Text("Drag the dots to pick colors — the big one turns the others with it. Double-click the wheel to add a color.")
                     .font(.app(11.5)).foregroundStyle(.secondary)
+            }
+            Section {
+                SettingRow(title: "Surface", detail: "Colorful gives each page its own living gradient, like the Cleaner. Theme uses your colors above. Glass uses the blur below.",
+                           symbol: "rectangle.fill.on.rectangle.angled.fill", color: .pink) {
+                    Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.surface }, set: { prefs.appearance.surfaceChoice = $0 })) {
+                        ForEach(Appearance.Surface.allCases) { Text($0.title).tag($0) }
+                    }
+                    .labelsHidden().frame(width: 190)
+                }
+            } header: {
+                HStack {
+                    Text("Surface")
+                    Spacer()
+                    Button("Reset to Default") { withAnimation(Theme.smooth) { prefs.appearance = Appearance() } }
+                        .controlSize(.small)
+                        .disabled(prefs.appearance == Appearance())
+                }
             }
             Section {
                 SettingRow(title: "Glass", detail: "Liquid is Spotlight's glass. Frosted is a Gaussian blur that lets more of the screen through.",
@@ -500,23 +645,20 @@ private struct AppearancePane: View {
                     }
                     .labelsHidden().frame(width: 200)
                 }
-                Text("The quick brown fox jumps over the lazy dog — ⌘⇧N  File › New Folder")
+                Text("The quick brown fox jumps over the lazy dog — shift ⌘N  File › New Folder")
                     .font(.app(15, .medium))
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, 4)
             }
             Section("Icons") {
-                SettingRow(title: "Icon style", detail: "Apple's SF Symbols: tinted, mono, glossy color, glass, outline, gradient, soft or plain.",
+                SettingRow(title: "Selected", detail: "The selected sidebar item, and icons on every page.",
                            symbol: "square.grid.2x2.fill", color: .blue) {
-                    Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.iconStyle }, set: { prefs.appearance.iconStyleChoice = $0 })) {
-                        ForEach(Appearance.IconStyle.allCases) { style in
-                            Label { Text(style.title) } icon: { IconTile(symbol: "star.fill", color: .orange, size: 16).environment(\.appearance, {
-                                var a = prefs.appearance; a.iconStyleChoice = style; return a }()) }
-                                .tag(style)
-                        }
-                    }
-                    .labelsHidden().frame(width: 170)
+                    iconPicker(SwiftUI.Binding(get: { prefs.appearance.iconStyle }, set: { prefs.appearance.iconStyleChoice = $0 }))
+                }
+                SettingRow(title: "Not selected", detail: "The other sidebar items. Frosted glass lets the selected one stand out, as in the Cleaner.",
+                           symbol: "square.grid.2x2", color: .gray) {
+                    iconPicker(SwiftUI.Binding(get: { prefs.appearance.idleIconStyle }, set: { prefs.appearance.idleIconStyleChoice = $0 }))
                 }
             }
             Section("Shape") {
@@ -534,12 +676,22 @@ private struct AppearancePane: View {
             Section {
                 HStack {
                     Spacer()
-                    Button("Reset to Spotlight Look") { withAnimation(Theme.smooth) { prefs.appearance = Appearance() } }
+                    Button("Reset to Default") { withAnimation(Theme.smooth) { prefs.appearance = Appearance() } }
                         .glassButton()
                         .disabled(prefs.appearance == Appearance())
                 }
             }
         }
+    }
+
+    private func iconPicker(_ value: SwiftUI.Binding<Appearance.IconStyle>) -> some View {
+        Picker("", selection: value) {
+            ForEach(Appearance.IconStyle.allCases) { style in
+                Label { Text(style.title) } icon: { IconTile(symbol: "star.fill", color: .orange, size: 16, style: style) }
+                    .tag(style)
+            }
+        }
+        .labelsHidden().frame(width: 170)
     }
 
     /// Compact labeled slider for a control's second line.
@@ -654,7 +806,7 @@ private struct HotkeysPane: View {
                     }
                 }
                 if !prefs.panelKeyRegistered {
-                    Note(text: "\(prefs.panelKey.shortcut.display) is taken by another app or macOS — pick another combo.",
+                    Note(text: "\(prefs.panelKey.shortcut.display.macKeyWords) is taken by another app or macOS — pick another combo.",
                          symbol: "exclamationmark.triangle.fill", color: .orange)
                 }
                 SettingRow(title: "⌘Space opens", symbol: "command", color: .purple) {
@@ -685,7 +837,7 @@ private struct HotkeysPane: View {
                         }
                     }
                 }
-                Note(text: "Any other command or menu item: select it in Learn and press \(prefs.recordKey.shortcut.display).")
+                Note(text: "Any other command or menu item: select it in Learn and press \(prefs.recordKey.shortcut.display.macKeyWords).")
             }
         }
     }
@@ -717,11 +869,11 @@ private struct PanelPane: View {
             }
             Section("Built in") {
                 ForEach([("↩", "Run the selected item / open the selected app"), ("⇥", "Nothing typed: switch between frequently used and suggested shortcuts"), ("↑", "Move the selection up"), ("↓", "Move the selection down"),
-                         ("⎋", "Back to the app list, then close (or ⌫ on empty search)"), ("⌘R", "Full rescan of this app (it also refreshes quietly each time you open it)"),
+                         ("⎋", "Back to the app list, then close (or delete on empty search)"), ("⌘R", "Full rescan of this app (it also refreshes quietly each time you open it)"),
                          ("⌘,", "Open these settings"), ("⌘W", "Close Learn")], id: \.1) { key, what in
                     HStack(alignment: .center) {
                         Text(what).frame(maxWidth: .infinity, alignment: .leading)
-                        Keycaps(display: key, size: 11.5)
+                        Keycaps(display: key, size: 14, room: 1.5)
                     }
                 }
             }
@@ -741,7 +893,7 @@ private struct DisplayPane: View {
                 ToggleRow(title: "Both ⌃ keys = right-click", detail: "Left + right Control together right-clicks at the pointer.",
                           symbol: "contextualmenu.and.cursorarrow", color: .blue, isOn: $prefs.chordRightClick)
                 SettingRow(title: "Pointer mode",
-                           detail: "\(Bindings.shared.globals.first { $0.path == LearnActions.pointer }?.shortcut.display ?? "Its hotkey"): HJKL or arrows move, ⇧ slow, ⌥ scroll, Space click, D double-click, R right-click, V drag, the hotkey again jumps screens, ⎋ exit.",
+                           detail: "\(Bindings.shared.globals.first { $0.path == LearnActions.pointer }?.shortcut.display.macKeyWords ?? "Its hotkey"): HJKL or arrows move, shift slow, ⌥ scroll, space click, D double-click, R right-click, V drag, the hotkey again jumps screens, esc exit.",
                            symbol: "cursorarrow.motionlines", color: .green)
             }
             HUDStyleSections()
@@ -819,7 +971,7 @@ private struct ShortcutsPane: View {
                         Text("No custom shortcuts yet").font(.app(14, .semibold))
                         HStack(spacing: 5) {
                             Text("Open Learn, select any item, press")
-                            Keycaps(display: Prefs.shared.recordKey.shortcut.display, size: 11)
+                            Keycaps(display: Prefs.shared.recordKey.shortcut.display, size: 13.5, room: 1.5)
                         }
                         .font(.app(12)).foregroundStyle(.secondary)
                     }
@@ -837,7 +989,7 @@ private struct ShortcutsPane: View {
                             if let orig = appShortcut(g.scope, b.path) {
                                 Text("replaces \(orig)").font(.app(11.5)).foregroundStyle(.secondary)
                             }
-                            Keycaps(display: b.shortcut.display, size: 11.5)
+                            Keycaps(display: b.shortcut.display, size: 14, room: 1.5)
                             Button { withAnimation(Theme.snappy) { Bindings.shared.remove(g.scope, path: b.path); reload() } } label: {
                                 Image(systemName: "trash").font(.system(size: 11.5)).frame(width: 26, height: 26)
                             }
@@ -881,6 +1033,41 @@ private struct ShortcutsPane: View {
 // MARK: Key recorder
 
 /// Click, press a combo (needs ⌘/⌃/⌥ or an F-key); ⎋ cancels.
+/// The keycaps sit right on the row — no glass capsule — but move like Learn's liquid buttons: they swell and lean
+/// toward the pointer, squash when pressed and wobble back on release.
+private struct RecorderStyle: ButtonStyle {
+    let recording: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        RecorderBody(label: configuration.label, pressed: configuration.isPressed, recording: recording)
+    }
+}
+
+private struct RecorderBody<Label: View>: View {
+    let label: Label
+    let pressed: Bool
+    let recording: Bool
+    @State private var point: CGPoint?
+    @State private var size = CGSize.zero
+    @Environment(\.appearance) private var look
+
+    var body: some View {
+        let lean = point.map { CGSize(width: ($0.x / max(size.width, 1) - 0.5) * 6, height: ($0.y / max(size.height, 1) - 0.5) * 4) } ?? .zero
+        label
+            .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(Color.primary.opacity(recording ? 0.1 : 0)))
+            .offset(look.hoverMotion ? lean : .zero)
+            .scaleEffect(x: pressed ? 1.06 : (point != nil && look.hoverMotion ? 1.05 : 1), y: pressed ? 0.9 : (point != nil && look.hoverMotion ? 1.05 : 1))
+            .animation(pressed ? Theme.press : Theme.release, value: pressed)
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let p): withAnimation(.interactiveSpring(response: 0.25, dampingFraction: 0.7)) { point = p }
+                case .ended: withAnimation(Theme.release) { point = nil }
+                }
+            }
+            .onChange(of: pressed) { _, d in if d { Sounds.play(.click) } }
+    }
+}
+
 struct KeyRecorder: View {
     let display: String
     var panelKey = false   // keys used inside Learn's panel may be plain ⇥
@@ -899,19 +1086,20 @@ struct KeyRecorder: View {
                 } else if display.isEmpty {
                     Text("Record").foregroundStyle(.secondary)
                 } else {
-                    Keycaps(display: display, size: 11.5)
+                    Keycaps(display: display, size: 14, room: 1.5)
                 }
             }
             .font(.app(12, .medium))
-            .padding(.horizontal, 8)
-            .frame(minWidth: 128, minHeight: 30)
+            .padding(.horizontal, 6)
+            .frame(minWidth: 128, minHeight: 34, alignment: .trailing)
             .fixedSize()
             .overlay { if recording { RecordingRing().transition(.opacity) } }
             .animation(Theme.snappy, value: recording)
             .animation(Theme.bouncy, value: display)
+            .contentShape(Rectangle())
         }
-        .buttonStyle(LiquidButtonStyle(shape: Capsule(), tint: recording ? Color.accentColor.opacity(0.35) : nil))
-        .help(recording ? "Press a combo · ⎋ cancel" : "Click to record a new shortcut")
+        .buttonStyle(RecorderStyle(recording: recording))
+        .help(recording ? "Press a combo · esc cancel" : "Click to record a new shortcut")
         .onDisappear(perform: stop)
     }
 

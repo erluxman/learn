@@ -189,7 +189,7 @@ struct SearchView: View {
                     if item.hasKey {
                         HStack(spacing: 6) {
                             Text("Current").font(.app(11.5)).foregroundStyle(.secondary)
-                            Keycaps(display: item.display, size: 10, dim: true)
+                            Keycaps(display: item.display, size: 12, dim: true)
                             if item.isCustom { Text("custom").font(.app(11.5)).foregroundStyle(.secondary) }
                         }
                     }

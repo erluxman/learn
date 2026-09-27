@@ -6,9 +6,11 @@ import SwiftUI
 /// resizes from grips on the glass's edges and corners.
 final class GlassWindow: NSWindow {
     let motion = JellyMotion()
+    /// Clear space around the glass: room for the wobble, the shadow and anything that hangs off the edge.
+    let margin: CGFloat
 
-    init(size: NSSize, minSize glassMin: NSSize) {
-        let m = JellyMotion.margin
+    init(size: NSSize, minSize glassMin: NSSize, margin m: CGFloat = JellyMotion.margin) {
+        margin = m
         super.init(contentRect: NSRect(x: 0, y: 0, width: size.width + 2 * m, height: size.height + 2 * m),
                    styleMask: [.borderless, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         isOpaque = false
@@ -43,7 +45,7 @@ final class GlassWindow: NSWindow {
 /// Settings ▸ Appearance ▸ Jelly wobble loosens the spring (more give, more bounce); 0 turns it off.
 final class JellyMotion: NSObject, ObservableObject {
     static let margin: CGFloat = 36
-    static let maxLag: CGFloat = 14
+    static let maxLag: CGFloat = 7
 
     @Published private(set) var lag = CGSize.zero
     var paused = false { didSet { if paused { settle() } } }   // resizing moves the origin too; that isn't a drag
@@ -56,9 +58,9 @@ final class JellyMotion: NSObject, ObservableObject {
     private var glass = CGPoint.zero      // where the glass is; the spring pulls it to `anchor`
     private var velocity = CGVector.zero  // the glass's, once released
     private var dragVelocity = CGVector.zero   // the window's while held, smoothed
-    private var lastMove: CFTimeInterval = 0
     private var dragging = false
     private var lastStep: CFTimeInterval = 0
+    private var lastMouse: CGPoint?
 
     func attach(_ w: NSWindow) {
         window = w
@@ -72,20 +74,19 @@ final class JellyMotion: NSObject, ObservableObject {
 
     private func windowMoved() {
         guard let w = window else { return }
-        let p = Self.position(w), now = CACurrentMediaTime()
-        let d = CGVector(dx: p.x - anchor.x, dy: p.y - anchor.y)
-        let jump = hypot(d.dx, d.dy) > 240   // re-centering / another screen: not a drag
-        anchor = p
-        let wobble = Prefs.shared.appearance.wobble
-        guard !jump, !paused, wobble > 0, Self.mouseHeld(),
-              !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return settle() }
-        // Held: rigid. Track how fast the window goes so the drop can carry that momentum.
-        let dt = max(now - lastMove, 1.0 / 240)
-        if dt < 0.1 {
-            let k = 0.35
-            dragVelocity = CGVector(dx: dragVelocity.dx * (1 - k) + d.dx / dt * k, dy: dragVelocity.dy * (1 - k) + d.dy / dt * k)
-        } else { dragVelocity = .zero }
-        lastMove = now
+        anchor = Self.position(w)
+        let wobble = Prefs.shared.appearance.wobble, held = Self.mouseHeld()
+        guard !paused, wobble > 0, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion else { return settle() }
+        guard held else {
+            // Let go but still moving: the drag's last catch-up, or macOS pushing the window back inside the screen
+            // at an edge or corner. The glass is springing already — let it chase the new spot instead of freezing.
+            // Not springing (re-centred, moved to another screen): just snap.
+            if link != nil { return }
+            return settle()
+        }
+        // Held: rigid, and any move is the drag, however big (fast throws coalesce into large steps).
+        // The drop's momentum is measured from the pointer each frame (see `step`), since macOS moves the window
+        // itself during a drag and reports the moves late.
         dragging = true
         glass = anchor; velocity = .zero
         if lag != .zero { lag = .zero }
@@ -105,15 +106,23 @@ final class JellyMotion: NSObject, ObservableObject {
         let dt = lastStep == 0 ? 1.0 / 120 : min(now - lastStep, 1.0 / 30)
         lastStep = now
         if dragging {
-            guard !Self.mouseHeld() else {   // still held: stay solid; a pause kills the momentum
-                if CACurrentMediaTime() - lastMove > 0.08 { dragVelocity = .zero }
+            guard !Self.mouseHeld() else {   // still held: stay solid, and follow the pointer's speed (a pause decays it)
+                let m = NSEvent.mouseLocation
+                if let last = lastMouse {
+                    let k = 0.3, vx = (m.x - last.x) / dt, vy = -(m.y - last.y) / dt   // y down, like `anchor`
+                    dragVelocity = CGVector(dx: dragVelocity.dx * (1 - k) + vx * k, dy: dragVelocity.dy * (1 - k) + vy * k)
+                }
+                lastMouse = m
                 return
             }
+            lastMouse = nil
             drop()
         }
         let wobble = min(max(Prefs.shared.appearance.wobble, 0.1), 2)
-        let stiffness = 320 / wobble
-        let damping = 2 * max(0.5 - 0.18 * wobble, 0.16) * stiffness.squareRoot()
+        // High friction: damping ratio 0.5 whatever the wobble setting, so a drop swings once, bounces back a
+        // little, and stops (≤ 2 visible swings, settled in ~0.5 s). The setting only scales how far it swings.
+        let stiffness = 420 / max(wobble, 0.5).squareRoot()
+        let damping = 2 * 0.5 * stiffness.squareRoot()
         for _ in 0..<2 {   // two half-steps keep the spring stable at any frame rate
             let h = dt / 2
             let ax = stiffness * (anchor.x - glass.x) - damping * velocity.dx
@@ -131,9 +140,9 @@ final class JellyMotion: NSObject, ObservableObject {
     private func drop() {
         dragging = false
         let wobble = min(max(Prefs.shared.appearance.wobble, 0.1), 2)
-        let carry = 0.35 * wobble, cap = 900.0
+        let carry = 0.175 * wobble, cap = 450.0
         velocity = CGVector(dx: max(min(dragVelocity.dx * carry, cap), -cap),
-                            dy: max(min(dragVelocity.dy * carry, cap), -cap) + 160 * wobble)
+                            dy: max(min(dragVelocity.dy * carry, cap), -cap) + 80 * wobble)
         dragVelocity = .zero
     }
 
@@ -191,23 +200,45 @@ struct TrafficLights: View {
 
 // MARK: Moving and resizing
 
-/// Title strip: dragging here moves the window (with the jelly); everywhere else belongs to the controls.
+/// Drag area: dragging here moves the window (with the jelly). Laid behind a window's content it makes every
+/// empty spot a handle; controls in front keep their clicks.
+/// `forwardsScroll`: scrolls over the strip go to the window's main scroll view (a pinned header over a list).
 struct WindowDragArea: NSViewRepresentable {
+    var forwardsScroll = false
     final class DragView: NSView {
+        var forwardsScroll = false
         override var mouseDownCanMoveWindow: Bool { true }
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }   // drag a window that isn't in front yet
         override func mouseDown(with event: NSEvent) {
             if event.clickCount == 2 { window?.performZoom(nil) } else { window?.performDrag(with: event) }
         }
+        override func scrollWheel(with event: NSEvent) {
+            guard forwardsScroll, let root = window?.contentView, let target = Self.largestScrollView(in: root) else {
+                return super.scrollWheel(with: event)
+            }
+            target.scrollWheel(with: event)
+        }
+        private static func largestScrollView(in v: NSView) -> NSScrollView? {
+            var best: NSScrollView?
+            func walk(_ v: NSView) {
+                if let s = v as? NSScrollView, !s.isHiddenOrHasHiddenAncestor, s.hasVerticalScroller || s.documentView != nil,
+                   s.frame.width * s.frame.height > (best.map { $0.frame.width * $0.frame.height } ?? 0) { best = s }
+                v.subviews.forEach(walk)
+            }
+            walk(v)
+            return best
+        }
     }
-    func makeNSView(context: Context) -> NSView { DragView() }
+    func makeNSView(context: Context) -> NSView { let v = DragView(); v.forwardsScroll = forwardsScroll; return v }
     func updateNSView(_ v: NSView, context: Context) {}
 }
 
-/// Lays the grips out along the glass, which sits `JellyMotion.margin` inside the window.
+/// Lays the grips out along the glass, which sits the window's `margin` inside it.
 private final class GripContainer: NSView {
     override func layout() {
         super.layout()
-        let glass = bounds.insetBy(dx: JellyMotion.margin, dy: JellyMotion.margin)
+        let m = (window as? GlassWindow)?.margin ?? JellyMotion.margin
+        let glass = bounds.insetBy(dx: m, dy: m)
         let t: CGFloat = 10, c: CGFloat = 18   // edge thickness (half in, half out), corner size
         for case let g as ResizeGrip in subviews {
             let e = g.edges

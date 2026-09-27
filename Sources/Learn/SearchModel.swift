@@ -198,7 +198,11 @@ final class SearchModel: ObservableObject {
             let strong = query.isEmpty ? apps : apps.filter { Fuzzy.rank(query, title: $0.name) ?? 0 >= 6_000 }
             let weak = query.isEmpty ? [] : apps.filter { Fuzzy.rank(query, title: $0.name) ?? 0 < 6_000 }
             // Like Spotlight: nothing typed, nothing listed — the panel is just the search field.
-            results = query.isEmpty ? [] : top + strong.map(Hit.app) + global + weak.map(Hit.app) + rest
+            // "settings", "prefs", "learn set…": Learn's own settings come first, ahead of System Settings and the rest.
+            let own = !query.isEmpty && [SettingsWindow.title, "Settings", "Preferences", "Learn Preferences"]
+                .contains { Fuzzy.rank(query, title: $0) ?? 0 >= 6_000 }
+            let mine = own ? [Hit.app(Self.settingsEntry)] : []
+            results = query.isEmpty ? [] : mine + top + strong.filter { $0 != Self.settingsEntry }.map(Hit.app) + global + weak.map(Hit.app) + rest
             info = "\(apps.count) apps\(global.isEmpty ? "" : " · \(global.count) shortcuts")\(files.isEmpty ? "" : " · \(files.count) files")"
         }
         if !keepSelection || selection >= count { selection = 0 }

@@ -301,6 +301,7 @@ struct Keycaps: View {
     let display: String
     var size: CGFloat = 12
     var dim = false
+    var room: CGFloat = 1
 
     static func split(_ s: String) -> [String] {
         var rest = Substring(s), caps: [String] = []
@@ -312,43 +313,97 @@ struct Keycaps: View {
 
     var body: some View {
         HStack(spacing: size * 0.28) {
-            ForEach(Array(Self.split(display).enumerated()), id: \.offset) { _, k in Keycap(label: k, size: size, dim: dim) }
+            ForEach(Array(Self.split(display).enumerated()), id: \.offset) { _, k in Keycap(label: k, size: size, dim: dim, room: room) }
         }
         .fixedSize()
     }
 }
 
+extension String {
+    /// A shortcut written out for a sentence, as the keys are printed on a MacBook: "⇧⌘N" → "shift ⌘N", "⎋" → "esc".
+    var macKeyWords: String {
+        var out = self
+        for (glyph, word) in Keycap.words where glyph.count == 1 { out = out.replacingOccurrences(of: glyph, with: " \(word) ") }
+        return out.replacingOccurrences(of: "  ", with: " ").trimmingCharacters(in: .whitespaces)
+    }
+}
+
+/// One key as a small 3D glass keycap in its key's color. Labels follow what's printed on a MacBook (2024 US layout): ⌘ ⌥ ⌃ and the
+/// arrows are printed as symbols; shift, tab, return, delete, esc, caps lock and fn are printed as words.
 struct Keycap: View {
     let label: String
     var size: CGFloat = 12
     var dim = false
+    var room: CGFloat = 1   // padding inside the key (1.5 = roomier, for Settings)
+    @State private var point: CGPoint?   // pointer over this key
 
-    /// SF Symbols drawn for keyboard keys; anything else (letters, F-keys) is text.
-    static let symbols: [String: String] = [
-        "⌘": "command", "⇧": "shift", "⌥": "option", "⌃": "control", "fn": "globe",
-        "↩": "return", "⌤": "return", "⎋": "escape", "⌫": "delete.left", "⌦": "delete.right", "⇥": "arrow.right.to.line",
-        "←": "arrow.left", "→": "arrow.right", "↑": "arrow.up", "↓": "arrow.down", "Space": "space",
+    /// Glyphs a MacBook keyboard doesn't print, as the word on the key (or the key's name when there's no such key).
+    static let words: [String: String] = [
+        "⇧": "shift", "↩": "return", "⌤": "enter", "⇥": "tab", "⌫": "delete", "⌦": "fwd delete", "⎋": "esc",
+        "⇪": "caps lock", "fn": "fn", "Space": "space", "↖": "home", "↘": "end", "⇞": "page up", "⇟": "page down",
     ]
+    /// Printed on the keys, drawn as MacBook arrow keys do (triangles).
+    static let arrows: [String: String] = ["←": "◀︎", "→": "▶︎", "↑": "▲", "↓": "▼"]
+
+    /// Every key wears the "Record a shortcut" icon's color, so its gradient runs the same pink → orange.
+    static let color = Color.red
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: size * 0.42, style: .continuous)
-        Group {
-            if let symbol = Self.symbols[label] {
-                Image(systemName: symbol).font(.system(size: size * 0.92, weight: .semibold))
-            } else {
-                Text(label).font(.system(size: size, weight: .semibold, design: .rounded)).lineLimit(1)
-            }
-        }
+        let word = Self.words[label]
+        Text(word ?? Self.arrows[label] ?? label)
+            .font(.system(size: word != nil ? size * 0.88 : (Self.arrows[label] != nil ? size * 0.72 : size),
+                          weight: .semibold, design: .rounded))
+            .lineLimit(1)
             .fixedSize()
-            .foregroundStyle(dim ? AnyShapeStyle(.secondary) : AnyShapeStyle(.primary))
-            .padding(.horizontal, size * 0.42)
-            .frame(minWidth: size * 1.9, minHeight: size * 1.85)
-            .background(
-                shape.fill(LinearGradient(colors: [Color.primary.opacity(0.1), Color.primary.opacity(0.05)], startPoint: .top, endPoint: .bottom))
-                    .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.3), .primary.opacity(0.12)],
-                                                               startPoint: .top, endPoint: .bottom), lineWidth: 0.75))
-                    .shadow(color: .black.opacity(0.18), radius: 0, y: 1)
-            )
+            .foregroundStyle(.white.opacity(dim ? 0.85 : 1))
+            .shadow(color: .black.opacity(0.35), radius: 0.5, y: 0.5)
+            .padding(.horizontal, size * 0.45 * room)
+            .padding(.vertical, size * 0.32 * (room - 1))
+            .frame(minWidth: size * (1.9 + 0.5 * (room - 1)), minHeight: size * 1.85)
+            .background(KeyTile(color: Self.color, size: size, lit: point != nil).opacity(dim ? 0.75 : 1))
+            .modifier(KeyHover(point: $point))
+    }
+}
+
+/// A keycap drawn exactly like the "Record a shortcut" icon tile (IconTile's gradient style): a two-tone diagonal gradient
+/// of the key's color, a white label and a soft glow of the same color underneath. Glows a little more under the pointer.
+private struct KeyTile: View {
+    let color: Color
+    let size: CGFloat
+    let lit: Bool
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: size * 1.85 * 0.27, style: .continuous)   // the tile's corner, at the key's height
+        shape.fill(LinearGradient(colors: [IconTile.shift(color, hue: -0.06, brightness: lit ? 0.18 : 0.12),
+                                           IconTile.shift(color, hue: 0.07, brightness: lit ? -0.02 : -0.08)],
+                                  startPoint: .topLeading, endPoint: .bottomTrailing))
+            .shadow(color: color.opacity(lit ? 0.45 : 0.3), radius: size * 1.85 * (lit ? 0.16 : 0.1), y: size * 1.85 * 0.04)
+    }
+}
+
+/// A keycap under the pointer: swells, lifts a little and leans toward the cursor; springs back when it leaves.
+private struct KeyHover: ViewModifier {
+    @SwiftUI.Binding var point: CGPoint?
+    @State private var size = CGSize.zero
+    @Environment(\.appearance) private var look
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        let on = look.hoverMotion && !reduceMotion && point != nil
+        let lean = point.map { CGSize(width: ($0.x / max(size.width, 1) - 0.5) * 3, height: ($0.y / max(size.height, 1) - 0.5) * 2 - 1.5) } ?? .zero
+        content
+            .scaleEffect(on ? 1.12 : 1)
+            .offset(on ? lean : .zero)
+            .rotation3DEffect(.degrees(on ? Double(lean.width) * 5 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.6)
+            .zIndex(on ? 1 : 0)
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let p):
+                    withAnimation(point == nil ? .spring(response: 0.28, dampingFraction: 0.6) : .interactiveSpring(response: 0.2, dampingFraction: 0.75)) { point = p }
+                case .ended:
+                    withAnimation(.spring(response: 0.42, dampingFraction: 0.5)) { point = nil }
+                }
+            }
     }
 }
 
@@ -358,11 +413,20 @@ struct IconTile: View {
     let symbol: String
     var color: Color = .accentColor
     var size: CGFloat = 28
+    var style: Appearance.IconStyle? = nil   // nil: the Appearance icon style
     @Environment(\.appearance) private var look
 
     var body: some View {
+        tile.modifier(IconHover(size: size))
+    }
+
+    @ViewBuilder private var tile: some View {
         let shape = RoundedRectangle(cornerRadius: size * 0.27, style: .continuous)
-        switch look.iconStyle {
+        switch style ?? look.iconStyle {
+        case .slab:
+            GlassSlab(symbol: symbol, color: color, size: size)
+        case .frosted:
+            GlassSlab(symbol: symbol, color: color, size: size, frosted: true)
         case .tinted:
             shape.fill(color.opacity(0.16))
                 .overlay(shape.strokeBorder(color.opacity(0.32), lineWidth: 0.75))
@@ -409,7 +473,7 @@ struct IconTile: View {
     }
 
     /// `color` with its hue and brightness nudged (for two-tone gradients).
-    private static func shift(_ color: Color, hue dh: CGFloat, brightness db: CGFloat) -> Color {
+    static func shift(_ color: Color, hue dh: CGFloat, brightness db: CGFloat) -> Color {
         var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
         (NSColor(color).usingColorSpace(.sRGB) ?? .gray).getHue(&h, saturation: &s, brightness: &b, alpha: &a)
         return Color(hue: (h + dh + 1).truncatingRemainder(dividingBy: 1), saturation: s, brightness: min(max(b + db, 0), 1))
@@ -431,6 +495,89 @@ struct IconTile: View {
 }
 
 /// Big pane icon: floats on a breathing glow of its color and tilts toward the pointer in 3D.
+/// Where the pointer is over the row an icon sits in (-0.5…0.5 across it), so the icon can react to the whole row.
+private struct RowPointerKey: EnvironmentKey { static let defaultValue: CGPoint? = nil }
+extension EnvironmentValues {
+    var rowPointer: CGPoint? {
+        get { self[RowPointerKey.self] }
+        set { self[RowPointerKey.self] = newValue }
+    }
+}
+
+extension View {
+    /// Hovering anywhere on this row plays its icons (tilt toward the pointer, swell, shine) and brings the row a
+    /// touch forward.
+    func rowHover() -> some View { modifier(RowHover()) }
+}
+
+private struct RowHover: ViewModifier {
+    @State private var point: CGPoint?
+    @State private var size = CGSize.zero
+    @Environment(\.appearance) private var look
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    func body(content: Content) -> some View {
+        let on = look.hoverMotion && !reduceMotion
+        content
+            .environment(\.rowPointer, on ? point.map { CGPoint(x: $0.x / max(size.width, 1) - 0.5, y: $0.y / max(size.height, 1) - 0.5) } : nil)
+            .scaleEffect(on && point != nil ? 1.015 : 1)
+            .onGeometryChange(for: CGSize.self) { $0.size } action: { size = $0 }
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let p):
+                    withAnimation(point == nil ? .spring(response: 0.3, dampingFraction: 0.65) : .interactiveSpring(response: 0.2, dampingFraction: 0.8)) { point = p }
+                case .ended:
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.55)) { point = nil }
+                }
+            }
+    }
+}
+
+/// Every icon plays with the pointer: it tilts toward it in 3D, swells, and a shine follows the cursor across its
+/// face; inside a `rowHover()` row the whole row drives it. Springs back when the pointer leaves.
+/// Off with Appearance ▸ Hover motion or Reduce Motion.
+struct IconHover: ViewModifier {
+    let size: CGFloat
+    @State private var point: CGPoint?
+    @Environment(\.rowPointer) private var row
+    @Environment(\.appearance) private var look
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func body(content: Content) -> some View {
+        let on = look.hoverMotion && !reduceMotion
+        // Pointer across the icon, -0.5…0.5: its own hover, else where it is over the row (a gentler lean).
+        let own = point.map { CGPoint(x: $0.x / size - 0.5, y: $0.y / size - 0.5) }
+        let p = own ?? row.map { CGPoint(x: $0.x * 0.6, y: $0.y * 0.8) }
+        let active = on && p != nil
+        let q = p ?? .zero
+        content
+            .overlay {
+                if active {
+                    RadialGradient(colors: [.white.opacity(0.5), .white.opacity(0)], center: UnitPoint(x: q.x + 0.5, y: q.y + 0.5),
+                                   startRadius: 0, endRadius: size * 0.7)
+                        .blendMode(.plusLighter)
+                        .mask { content }   // only on the icon itself, whatever its shape
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+            .rotation3DEffect(.degrees(active ? Double(q.x) * 26 : 0), axis: (x: 0, y: 1, z: 0), perspective: 0.5)
+            .rotation3DEffect(.degrees(active ? Double(-q.y) * 26 : 0), axis: (x: 1, y: 0, z: 0), perspective: 0.5)
+            .scaleEffect(active ? 1.15 : 1)
+            .contentShape(Rectangle())
+            .onContinuousHover { phase in
+                guard on else { return }
+                switch phase {
+                case .active(let loc):
+                    withAnimation(point == nil ? .spring(response: 0.3, dampingFraction: 0.6) : .interactiveSpring(response: 0.18, dampingFraction: 0.8)) {
+                        point = loc
+                    }
+                case .ended:
+                    withAnimation(.spring(response: 0.45, dampingFraction: 0.5)) { point = nil }
+                }
+            }
+    }
+}
+
 struct HeroIcon: View {
     let symbol: String
     let color: Color
@@ -478,7 +625,7 @@ struct KeyHint: View {
     let label: String
     var body: some View {
         HStack(spacing: 5) {
-            Keycaps(display: keys, size: 10, dim: true)
+            Keycaps(display: keys, size: 11.5, dim: true)
             Text(label).font(.app(11, .medium)).foregroundStyle(.secondary)
         }
     }

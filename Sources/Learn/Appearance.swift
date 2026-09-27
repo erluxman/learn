@@ -4,9 +4,24 @@ import SwiftUI
 struct Appearance: Codable, Equatable {
     enum Material: String, Codable, CaseIterable { case clear, regular }
     enum IconStyle: String, Codable, CaseIterable, Identifiable {
-        case tinted, mono, color, glass, outline, gradient, soft, plain
+        case slab, frosted, tinted, mono, color, glass, outline, gradient, soft, plain
         var id: Self { self }
-        var title: String { rawValue.prefix(1).uppercased() + rawValue.dropFirst() }
+        var title: String {
+            switch self {
+            case .slab: "3D glass"
+            case .frosted: "Frosted glass"
+            default: rawValue.prefix(1).uppercased() + rawValue.dropFirst()
+            }
+        }
+    }
+    /// What Learn's windows are made of: a living gradient in each page's color (the Cleaner look), one in the
+    /// theme's colors, or glass (the blur and tint settings below).
+    enum Surface: String, Codable, CaseIterable, Identifiable {
+        case colorful, theme, glass
+        var id: Self { self }
+        var title: String {
+            switch self { case .colorful: "Colorful gradient"; case .theme: "Theme gradient"; case .glass: "Glass" }
+        }
     }
 
     var material = Material.regular           // Liquid Glass comes in two blur levels: clear and regular
@@ -21,7 +36,11 @@ struct Appearance: Codable, Equatable {
     var fontChoice: String? = nil             // "" SF Pro · ".rounded" · ".serif" · ".mono" · a font family; nil = default
 
     var iconStyleChoice: IconStyle? = nil     // nil = default
-    var iconStyle: IconStyle { iconStyleChoice ?? .tinted }
+    var iconStyle: IconStyle { iconStyleChoice ?? .slab }   // icons in pages, and the selected sidebar item
+    var idleIconStyleChoice: IconStyle? = nil
+    var idleIconStyle: IconStyle { idleIconStyleChoice ?? .frosted }   // sidebar items that aren't selected, as in the Cleaner
+    var surfaceChoice: Surface? = nil
+    var surface: Surface { surfaceChoice ?? .colorful }
 
     var clickSoundChoice: SoundEffect? = nil
     var shortcutSoundChoice: SoundEffect? = nil
