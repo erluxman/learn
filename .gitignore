@@ -9,7 +9,7 @@ dist/
 DerivedData/
 
 # Launch videos, renders and their tooling (not app code)
-brag-output/
+brag-output*/
 *.mp4
 *.mov
 *.wav
@@ -20,3 +20,6 @@ brag-output/
 .vscode/
 .idea/
 *.swp
+
+# README media
+!docs/*.mp4
