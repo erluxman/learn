@@ -68,8 +68,8 @@ Press **⌥Space** (or take over **⌘Space**) in any app and start typing.
 | ⌥Space / ⌘Space | Open or close Learn |
 | ↩ | Run the shortcut, click the item, or open the app |
 | ⇥ / ⇧⇥ | Next / previous result (⇥ on an app shows its shortcuts) |
-| ⇥ on an empty search | Search only what's on screen |
-| ⇥ + Space | Right-click the highlighted on-screen item |
+| ⇥ + Space on an empty search | Search only what's on screen |
+| ⇥ + Space | Right-click the highlighted on-screen item (or, with none highlighted, where the mouse is) |
 | ⌘↩ | Record your own shortcut for the selected item |
 | ⌘R | Rescan the current app |
 | ⎋ | Close |

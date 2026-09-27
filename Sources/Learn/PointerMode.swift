@@ -8,6 +8,7 @@ final class PointerMode {
 
     private var held: Set<Int> = []   // direction keys currently down
     private var heldSince = Date()
+    private var carry = CGPoint.zero   // sub-pixel motion not posted yet (the slow start moves under 1px a tick)
     private var timer: Timer?
     private var dragging = false
     private let src = CGEventSource(stateID: .hidSystemState)
@@ -46,6 +47,7 @@ final class PointerMode {
         if Self.moves.contains(code) {
             if held.isEmpty {
                 heldSince = Date()
+                carry = .zero
                 timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] _ in self?.tick() }
                 RunLoop.main.add(timer!, forMode: .common)
             }
@@ -73,7 +75,15 @@ final class PointerMode {
 
     // MARK: Motion
 
-    /// 60 Hz while a direction key is held: speeds up over ~0.6s; ⇧ = 1px steps, ⌥ = scroll instead.
+    /// Speed per tick after holding a direction key `t` seconds: an accelerator pedal. Ease-in (cubic), so a tap barely
+    /// nudges, holding keeps pressing harder, and full speed comes after `rampUp`. Letting go stops dead.
+    private static let rampUp = 1.0
+    private static func speed(_ t: Double, from lo: Double, to hi: Double) -> Double {
+        let p = min(t / rampUp, 1)
+        return lo + (hi - lo) * p * p * p
+    }
+
+    /// 60 Hz while a direction key is held; ⇧ = 1px steps, ⌥ = scroll instead.
     private func tick() {
         var dx = 0.0, dy = 0.0
         if !held.isDisjoint(with: Self.left) { dx -= 1 }
@@ -84,15 +94,18 @@ final class PointerMode {
         let flags = CGEventSource.flagsState(.combinedSessionState)
         let t = Date().timeIntervalSince(heldSince)
         if flags.contains(.maskAlternate) {
-            let s = min(4 + t * 30, 30)
+            let s = Self.speed(t, from: 2, to: 30)
             // Positive wheel values scroll toward the top / left.
             CGEvent(scrollWheelEvent2Source: src, units: .pixel, wheelCount: 2,
                     wheel1: Int32(-dy * s), wheel2: Int32(-dx * s), wheel3: 0)?.post(tap: .cghidEventTap)
             return
         }
-        let s = flags.contains(.maskShift) ? 1 : min(2 + t * 45, 30)
-        guard let from = CGEvent(source: nil)?.location else { return }
-        post(dragging ? .leftMouseDragged : .mouseMoved, at: Self.clamp(CGPoint(x: from.x + dx * s, y: from.y + dy * s), from: from))
+        let s = flags.contains(.maskShift) ? 1 : Self.speed(t, from: 0.5, to: 40)   // 30 → 2,400 px/s
+        carry.x += dx * s; carry.y += dy * s
+        let step = CGPoint(x: carry.x.rounded(.towardZero), y: carry.y.rounded(.towardZero))
+        carry.x -= step.x; carry.y -= step.y
+        guard step != .zero, let from = CGEvent(source: nil)?.location else { return }
+        post(dragging ? .leftMouseDragged : .mouseMoved, at: Self.clamp(CGPoint(x: from.x + step.x, y: from.y + step.y), from: from))
     }
 
     /// Keep the pointer on a display; at an edge, slide along it.

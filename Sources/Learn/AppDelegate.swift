@@ -134,6 +134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func show() {
         pointer.stop()   // the panel needs plain keys
+        // A ⇥ + Space right-click closes the panel with both keys still down; their key-ups went to the other app.
+        tabDown = false; tabPending = false; spaceDown = false
         if SettingsWindow.shared.isFront {   // searching Learn's own settings; Settings stays open underneath
             panel.returnTo = nil
             model.willShow(frontmost: nil, settings: true)
@@ -162,6 +164,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         keyTap.panelKeys = { [weak self] cg, type in
             guard let self, self.panel.isVisible, !self.panel.isKeyWindow, let e = NSEvent(cgEvent: cg) else { return false }
             if type == .keyDown, Prefs.shared.panelKey.matches(Int(e.keyCode), Recorder.mods(e.modifierFlags)) { return false }
+            // Its key-up must reach macOS too: swallowed, the hotkey counts as still held and the next press is ignored
+            // (⌘Space didn't close the panel, and the first press after it closed did nothing).
+            if type == .keyUp, Int(e.keyCode) == Prefs.shared.panelKey.keyCode { _ = self.panelKey(e, focused: false); return false }
             if let rest = self.panelKey(e, focused: false), rest.type == .keyDown { self.typeWithoutFocus(rest) }
             return true
         }
@@ -175,7 +180,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let cmd = e.modifierFlags.contains(.command)
         let code = Int(e.keyCode), mods = Recorder.mods(e.modifierFlags)
         if focused, let action = Self.editAction(e) { NSApp.sendAction(action, to: nil, from: nil); return nil }
-        if code == kVK_Tab, mods.isEmpty, model.enterScreenOnly() { return nil }   // ⇥ on an empty search: on-screen items only
         if code == kVK_Tab, mods == [.shift], model.toggleSuggestions() { return nil }   // ⇧⇥ on an empty search: frequent ↔ suggested
         if let handled = tabChord(e, code: code, mods: mods) { return handled }
         if model.selectedShortcut != nil, Prefs.shared.recordKey.matches(code, mods) {   // Settings ▸ General ▸ Inside Learn
@@ -215,7 +219,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: ⇥ and the ⇥ + Space chord
 
-    /// ⇥ goes down the list (on an app row: into its shortcuts); ⇥ and Space together right-click the highlighted item.
+    /// ⇥ goes down the list (on an app row: into its shortcuts); ⇥ and Space together are the on-screen key (`onScreenChord`).
     /// So ⇥ waits for its release (or a repeat) before moving: Space arriving first makes it the chord instead.
     private var tabDown = false, tabPending = false, spaceDown = false
 
@@ -230,7 +234,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
             if spaceDown {   // Space went first: it typed a space — take it back
                 if model.query.hasSuffix(" ") { model.query.removeLast() }
-                model.contextMenu()
+                model.onScreenChord()
                 return .some(nil)
             }
             tabDown = true; tabPending = true
@@ -238,7 +242,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         case kVK_Space where mods.isEmpty:
             if tabDown {
                 tabPending = false
-                model.contextMenu()
+                model.onScreenChord()
                 return .some(nil)
             }
             spaceDown = true
@@ -260,6 +264,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         default:
             return e
         }
+    }
+
+    // MARK: Shortcuts meant for somewhere else
+
+    private static let functionKeys: Set<Int> = [kVK_F1, kVK_F2, kVK_F3, kVK_F4, kVK_F5, kVK_F6, kVK_F7, kVK_F8, kVK_F9, kVK_F10,
+                                                 kVK_F11, kVK_F12, kVK_F13, kVK_F14, kVK_F15, kVK_F16, kVK_F17, kVK_F18, kVK_F19, kVK_F20]
+
+    /// While the panel is open, a shortcut it has no use for — another app's global hotkey (F12 for Ghostty's quick terminal),
+    /// a system one (⌃→ to the next desktop) — closes it, so whatever that shortcut opens keeps the keyboard.
+    /// Any ⌘ / ⌃ combo or F-key counts, except the panel's own keys. Seen by the key tap, so even hotkeys that never reach the panel.
+    private func closePanelForShortcut(code: Int, mods: Mods) {
+        guard panel.isVisible, model.recording == nil, !Recorder.active,
+              mods.contains(.cmd) || mods.contains(.ctrl) || Self.functionKeys.contains(code),
+              !Self.panelUses(code: code, mods: mods) else { return }
+        Debug.log("shortcut \(code) \(mods.rawValue) closes the panel")
+        panel.dismiss(restoreFocus: false)
+    }
+
+    /// The panel's own ⌘ / ⌃ keys: its hotkey, recording, text editing (⌘C/V/X/A/Z, ⌘⌫, ⌘ + arrows, ⌃A/E/K), ⌘↩, ⌘R, ⌘W, ⌘,.
+    private static func panelUses(code: Int, mods: Mods) -> Bool {
+        if Prefs.shared.panelKey.matches(code, mods) || Prefs.shared.recordKey.matches(code, mods) { return true }
+        let cmdKeys: Set<Int> = [kVK_ANSI_A, kVK_ANSI_C, kVK_ANSI_V, kVK_ANSI_X, kVK_ANSI_Z, kVK_ANSI_R, kVK_ANSI_W, kVK_ANSI_Comma,
+                                 kVK_Return, kVK_Delete, kVK_LeftArrow, kVK_RightArrow, kVK_UpArrow, kVK_DownArrow]
+        if mods.contains(.cmd), !mods.contains(.ctrl), cmdKeys.contains(code) { return true }
+        return mods == [.ctrl] && [kVK_ANSI_A, kVK_ANSI_E, kVK_ANSI_K].contains(code)
     }
 
     private func tabStep() { if !model.drillIn() { model.move(1) } }   // ⇥ on an app: its shortcuts (↩ opens it)
@@ -302,9 +331,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             KeyHUD.shared.flash("⌃ + ⌃", caption: "Right-click")
             DispatchQueue.global(qos: .userInteractive).async { ElementScanner.click(at: p, right: true) }
         }
-        keyTap.observer = { code, mods in
+        keyTap.observer = { [weak self] code, mods in
             let app = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
             DispatchQueue.main.async {
+                self?.closePanelForShortcut(code: code, mods: mods)
                 KeyHUD.shared.pressed(code: code, mods: mods, app: app)
                 UsageStore.shared.recordKey(code: code, mods: mods, app: app)
             }

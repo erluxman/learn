@@ -18,10 +18,12 @@ final class Panel: NSPanel, NSWindowDelegate {
         hidesOnDeactivate = false
         delegate = self
         motion.attach(self)
+        // A click anywhere outside the panel closes it, like ⎋ — but what you clicked keeps the focus. (Global monitors only
+        // see clicks in other apps' windows, so this is always outside; don't wait for losing the keyboard, which can come first.)
         clickMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
             guard let self else { return }
             self.lastClickElsewhere = CACurrentMediaTime()
-            if self.withoutKeyboard, self.isVisible { self.dismiss(restoreFocus: false) }   // no focus to lose: a click away closes it
+            if self.isVisible { self.dismiss(restoreFocus: false) }
         }
         contentView = NSHostingView(rootView: AppearanceRoot { SearchView(model: model).modifier(Jelly(motion: motion)).padding(m) })
     }
@@ -101,7 +103,8 @@ final class Panel: NSPanel, NSWindowDelegate {
         // Only you close it by leaving: a click in another app, ⌘Tab, another desktop. Anything else took the keyboard on its
         // own — e.g. Ghostty's quick terminal sliding away and macOS handing focus to the app behind it — so take it back.
         if !clicked && !switched && Scanner.holdingFocus == 0 {
-            DispatchQueue.main.async { [weak self] in if let self, self.isVisible { self.makeKeyAndOrderFront(nil) } }
+            // Not straight away: the click that took it may reach the click monitor just after this (it closes the panel then).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in if let self, self.isVisible { self.makeKeyAndOrderFront(nil) } }
             return
         }
         // A scan (hidden launch / menu expansion) may grab focus → take it back instead of closing.

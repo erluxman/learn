@@ -49,7 +49,7 @@ final class SearchModel: ObservableObject {
     @Published var mode: Mode = .apps { didSet { screenOnly = false } }
     /// ⇧⇥ with nothing typed inside an app: the most relevant shortcuts instead of the most used.
     @Published private(set) var suggesting = false
-    /// ⇥ with nothing typed inside an app: search only what's on screen (buttons, links, text) — no shortcuts, no other apps.
+    /// ⇥ + Space with nothing typed inside an app: search only what's on screen (buttons, links, text) — no shortcuts, no other apps.
     @Published private(set) var screenOnly = false
 
     @Published var query = "" {
@@ -269,7 +269,7 @@ final class SearchModel: ObservableObject {
         return out
     }
 
-    /// ⇥ with nothing typed in an app: search only its on-screen items (⎋ / ⌫ go back). False when it doesn't apply.
+    /// Nothing typed in an app: search only its on-screen items (⎋ / ⌫ go back). False when it doesn't apply.
     func enterScreenOnly() -> Bool {
         guard query.isEmpty, !screenOnly, let app = currentApp else { return false }
         if screen.appID != app.id, let running = app.runningApp {   // not scanned yet (setting off, or drilled in)
@@ -407,16 +407,21 @@ final class SearchModel: ObservableObject {
 
     // MARK: On-screen elements
 
-    /// Tab on a highlighted on-screen element: open its right-click menu in the app.
+    /// ⇥ + Space. Nothing typed inside an app: search only what's on screen (plain ⇥ always moves down the list).
+    /// Otherwise right-click (`contextMenu`).
+    func onScreenChord() { if !enterScreenOnly() { contextMenu() } }
+
+    /// ⇥ + Space: right-clicks the highlighted on-screen item. With none highlighted (no app selected, or a menu
+    /// command / app row), right-clicks wherever the mouse is, like ⌃ + ⌃.
     func contextMenu() {
-        guard let app = currentApp, app != Self.settingsEntry, let s = selectedShortcut else { return }
-        guard let el = screen.elements[s.id] else {
-            notice = s.path.first == ElementScanner.marker ? "\(s.title) isn't on screen right now"
-                                                           : "Right-click works on on-screen items (tagged “screen”)"
+        if let app = currentApp, app != Self.settingsEntry, let s = selectedShortcut, let el = screen.elements[s.id] {
+            handFocus(to: app)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { ElementScanner.showMenu(el) }
             return
         }
-        handFocus(to: app)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { ElementScanner.showMenu(el) }
+        guard let p = CGEvent(source: nil)?.location else { return }
+        onClose(true)   // focus back to the app under the panel first
+        DispatchQueue.global(qos: .userInteractive).asyncAfter(deadline: .now() + 0.25) { ElementScanner.click(at: p, right: true) }
     }
 
     /// `window`: Ghostty's open quick terminal — scanned right away, alone, before the panel takes the keyboard and it hides.

@@ -653,8 +653,8 @@ private struct PanelSections: View {
             }
             Section("Built into the panel") {
                 ForEach([("↩", "Run the selected item / open the selected app"), ("⇥", "Next item (on an app: show its shortcuts instead of opening it)"), ("⇧⇥", "Previous item"),
-                         ("⇥ + Space", "Right-click the highlighted on-screen item"),
-                         ("⇥ ", "Nothing typed in an app: search only what's on screen"), ("⇧⇥ ", "Nothing typed in an app: frequently used ↔ suggested"),
+                         ("⇥ + Space", "Nothing typed in an app: search only what's on screen"),
+                         ("⇥ + Space ", "Right-click the highlighted on-screen item, or where the mouse is"), ("⇧⇥ ", "Nothing typed in an app: frequently used ↔ suggested"),
                          ("↑", "Move the selection up"), ("↓", "Move the selection down"),
                          ("⎋", "Close Learn"), ("⌫", "Empty search: back to the app list"), ("⌘R", "Full rescan of this app (it also refreshes quietly each time you open it)"),
                          ("⌘,", "Open these settings"), ("⌘W", "Close Learn")], id: \.1) { key, what in

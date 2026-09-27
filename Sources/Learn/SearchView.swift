@@ -57,7 +57,7 @@ struct SearchView: View {
 
     private var bar: some View {
         HStack(spacing: 14) {
-            if model.screenOnly {   // ⇥: searching only what's on screen
+            if model.screenOnly {   // ⇥ + Space: searching only what's on screen
                 Image(systemName: "cursorarrow.rays").font(.app(21)).foregroundStyle(.blue)
             } else if let app = model.currentApp {
                 Image(nsImage: AppCatalog.icon(app)).resizable().interpolation(.high).frame(width: 26, height: 26)
