@@ -44,7 +44,7 @@ struct Appearance: Codable, Equatable {
 
     var soundVolumeChoice: Double? = nil
     var clickSound: SoundEffect { .tick }       // settled sounds; only the volume is a setting
-    var shortcutSound: SoundEffect { .coin }    // game-style coin: the shortcut ran
+    var shortcutSound: SoundEffect { .tick }    // same click as choosing a menu item
     var soundVolume: Double { soundVolumeChoice ?? 0.5 }
 
     static let defaultFont = ""   // SF Pro, as Spotlight

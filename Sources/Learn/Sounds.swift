@@ -4,7 +4,7 @@ import AppKit
 /// Learn's own sounds are synthesized here (no audio files); the rest are macOS's system sounds.
 enum SoundEffect: String, Codable, CaseIterable, Identifiable {
     case none
-    case tick, tap, pop, bubble, droplet, chime, thud, coin           // synthesized
+    case tick, tap, pop, bubble, droplet, chime, thud                 // synthesized
     case tink, sysPop, purr, bottle, morse, glass, ping, frog         // /System/Library/Sounds
 
     var id: Self { self }
@@ -18,7 +18,6 @@ enum SoundEffect: String, Codable, CaseIterable, Identifiable {
         case .droplet: "Droplet"
         case .chime: "Glass chime"
         case .thud: "Soft thud"
-        case .coin: "Coin"
         case .tink: "Tink"
         case .sysPop: "Pop (macOS)"
         case .purr: "Purr"
@@ -29,7 +28,7 @@ enum SoundEffect: String, Codable, CaseIterable, Identifiable {
         case .frog: "Frog"
         }
     }
-    static let learn: [SoundEffect] = [.tick, .tap, .pop, .bubble, .droplet, .chime, .thud, .coin]
+    static let learn: [SoundEffect] = [.tick, .tap, .pop, .bubble, .droplet, .chime, .thud]
     static let system: [SoundEffect] = [.tink, .sysPop, .purr, .bottle, .morse, .glass, .ping, .frog]
 }
 
@@ -164,15 +163,6 @@ enum Sounds {
             }
         case .thud:   // soft, low, muted
             return render(0.1) { t in sweep(t, from: 180, to: 90, over: 0.06) * env(t, attack: 0.002, decay: 0.03) }
-        case .coin:   // game coin pickup: a short B5, then a ringing E6 — square-ish (odd harmonics), softened
-            func square(_ f: Double, _ t: Double) -> Double {
-                (sin(2 * .pi * f * t) + sin(2 * .pi * 3 * f * t) / 3 + sin(2 * .pi * 5 * f * t) / 5 + sin(2 * .pi * 7 * f * t) / 7) / 1.4
-            }
-            let step = 0.075
-            return render(0.55) { t in
-                t < step ? square(987.77, t) * 0.55 * min(t / 0.002, 1)
-                         : square(1_318.51, t - step) * 0.55 * exp(-(t - step) / 0.16) * min((t - step) / 0.002, 1)
-            }
         default:
             return []
         }
