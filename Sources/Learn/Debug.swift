@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// Temporary trace for diagnosing clicks: ~/Library/Application Support/Learn/debug.log
 enum Debug {
@@ -22,4 +23,29 @@ enum Debug {
 extension Debug {
     static var space: Int { CGSGetActiveSpace(CGSMainConnectionID()) }
     static var front: String { NSWorkspace.shared.frontmostApplication?.bundleIdentifier ?? "?" }
+}
+
+extension Debug {
+    /// A debug build (`swift build` / `swift run`); release builds from build.sh hide the badge and the Cleaner.
+    #if DEBUG
+    static let build = true
+    #else
+    static let build = false
+    #endif
+}
+
+/// "DEBUG" tag for a window's top-right corner; nothing in release builds.
+struct DebugBadge: View {
+    @Environment(\.appearance) private var look
+    var body: some View {
+        if Debug.build {
+            Text("DEBUG")
+                .font(.system(size: 10, weight: .bold, design: .rounded)).tracking(0.8)
+                .foregroundStyle(.black.opacity(0.8))
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .background(Capsule().fill(Color.orange))
+                .padding(.top, look.cornerInset(16)).padding(.trailing, look.cornerInset(18))
+                .allowsHitTesting(false)
+        }
+    }
 }

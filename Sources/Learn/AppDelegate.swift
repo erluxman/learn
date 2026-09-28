@@ -394,7 +394,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.addItem(withTitle: "Open Learn  (\(Prefs.shared.panelKey.shortcut.display))", action: #selector(menuShow), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Settings…", action: #selector(menuSettings), keyEquivalent: ",").target = self
-        menu.addItem(withTitle: "Open Cleaner…", action: #selector(menuCleaner), keyEquivalent: "").target = self
+        if Debug.build { menu.addItem(withTitle: "Open Cleaner…", action: #selector(menuCleaner), keyEquivalent: "").target = self }
         menu.addItem(.separator())
         menu.addItem(withTitle: "Rescan Running Apps", action: #selector(menuScanRunning), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Scan All Installed Apps (launches each hidden)…", action: #selector(menuScanAll), keyEquivalent: "").target = self

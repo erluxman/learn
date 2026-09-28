@@ -16,7 +16,7 @@ struct HUDStyleSections: View {
             Text("Shortcut bubble")
         } footer: {
             Text("Click a spot on the preview to move the bubble there. Pointer mode's hint uses this style too.")
-                .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                .font(.system(size: 12.5)).foregroundStyle(.secondary)
         }
         Section("Text") {
             Picker("Font", selection: style.font) {

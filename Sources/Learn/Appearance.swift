@@ -33,8 +33,11 @@ struct Appearance: Codable, Equatable {
     var tintStrength = 0.0                    // Liquid glass only: 0 no color … 1 strongly colored glass
     var wobble = 1.0                          // jelly wobble when a window is dragged; 0 off
 
+    /// Window corners, shared by Settings and the Cleaner.
+    var cornerRadiusChoice: Double? = nil
+    var cornerRadius: Double { cornerRadiusChoice ?? 40 }
+
     // Settled looks, no longer settings (older saved values for them are ignored):
-    var cornerRadius: Double { 40 }
     var shadow: Double { 1 }
     var hoverMotion: Bool { true }            // swell, lean and tilt under the pointer
     var iconStyle: IconStyle { .gradient }    // icons in pages, and the selected sidebar item
@@ -82,6 +85,8 @@ struct Appearance: Codable, Equatable {
         return Color(nsColor: tint.ns.withAlphaComponent(tintStrength))
     }
     var radius: CGFloat { cornerRadius }
+    /// Keeps something in the top-left corner (the traffic lights) inside the rounded corner at any radius.
+    func cornerInset(_ base: CGFloat) -> CGFloat { max(base, radius * 0.3 + 4) }
 }
 
 private struct AppearanceKey: EnvironmentKey { static let defaultValue = Appearance() }

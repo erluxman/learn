@@ -236,15 +236,14 @@ extension AnyTransition {
 // MARK: Surface
 
 enum CleanerLayout {
-    static let size = CGSize(width: 960, height: 580)
+    static let size = CGSize(width: 1040, height: 720)   // same as Learn Settings
     static let margin: CGFloat = 96         // clear room: shadow, and the button's lower half and halo
-    static let sidebar: CGFloat = 215
+    static let sidebar: CGFloat = 232
     static let rail: CGFloat = 78
-    static let firstRow: CGFloat = 114      // centre of the first sidebar row, from the top
-    static let rowStep: CGFloat = 64
+    static let firstRow: CGFloat = 128      // centre of the first sidebar row, from the top
+    static let rowStep: CGFloat = 70
     static let button: CGFloat = 80
     static let buttonLift: CGFloat = 13     // button centre above the surface's bottom edge
-    static let radius: CGFloat = 16
 }
 
 /// The window's surface: backdrop, sidebar (or rail) and the module's page. The round button is laid over the
@@ -464,7 +463,7 @@ private struct CleanerSidebar: View {
                     .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.08)],
                                                                startPoint: .top, endPoint: .bottom), lineWidth: 1))
                     .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
-                    .frame(width: compact ? 54 : 188, height: 54)
+                    .frame(width: compact ? 54 : 204, height: 54)
                     .position(x: compact ? CleanerLayout.rail / 2 + 6 : CleanerLayout.sidebar / 2,
                               y: CleanerLayout.firstRow + CGFloat(i) * CleanerLayout.rowStep)
                     .animation(.spring(response: 0.45, dampingFraction: 0.78), value: i)
@@ -517,7 +516,7 @@ private struct SidebarItem: View {
                 }
             }
             .padding(.horizontal, compact ? 10 : 18)
-            .frame(width: compact ? 54 : 188, height: 54)
+            .frame(width: compact ? 54 : 204, height: 54)
             .background { if hover && !selected { shape.fill(.white.opacity(0.06)) } }
             .overlay(alignment: .topTrailing) {
                 if let progress { ProgressPie(value: progress).frame(width: 13, height: 13).offset(x: 4, y: -4) }
@@ -573,7 +572,7 @@ private struct AssistantItem: View {
             }
         }
         .padding(.horizontal, compact ? 13 : 18)
-        .frame(width: compact ? 54 : 188, height: 44)
+        .frame(width: compact ? 54 : 204, height: 44)
     }
 }
 

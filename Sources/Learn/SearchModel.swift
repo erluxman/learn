@@ -27,7 +27,7 @@ final class SearchModel: ObservableObject {
         ("General", .permissions), ("Permissions", .permissions), ("Cleaner: clean up, protect, speed up your Mac", .permissions), ("Accessibility permission", .permissions), ("Send keystrokes & clicks permission", .permissions),
         ("Input Monitoring permission", .permissions), ("Launch at login", .permissions),
         ("Appearance", .appearance), ("Surface: colorful gradient or liquid glass", .appearance),
-        ("Glass color and intensity", .appearance), ("Jelly wobble when dragging windows", .appearance),
+        ("Glass color and intensity", .appearance), ("Jelly wobble when dragging windows", .appearance), ("Corner roundness of windows", .appearance),
         ("Sounds", .permissions), ("Sound volume", .permissions),
         ("Hotkeys", .hotkeys), ("Open Learn hotkey", .hotkeys), ("Replace Spotlight (⌘Space opens Learn)", .hotkeys), ("Label clickable items hotkey", .hotkeys),
         ("Right-click the focused item hotkey", .hotkeys), ("Open Learn Settings hotkey", .hotkeys),
@@ -40,7 +40,7 @@ final class SearchModel: ObservableObject {
         ("Advanced", .advanced), ("Rescan interval", .advanced), ("Rescan running apps", .advanced), ("Scan all installed apps", .advanced),
         ("Show database in Finder", .advanced), ("Debug log", .advanced),
         ("My Shortcuts", .shortcuts), ("Shortcuts you recorded in Learn", .shortcuts), ("Remove a recorded shortcut", .shortcuts),
-    ]
+    ].filter { Debug.build || !$0.0.hasPrefix("Cleaner") }   // the Cleaner is debug-only
     private static let settingsRows = settingsIndex.map {
         Shortcut(path: [settingsGroup, $0.1.title, $0.0], key: "", keyCode: nil, mods: [])
     }

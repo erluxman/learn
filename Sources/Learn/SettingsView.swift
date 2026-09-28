@@ -66,7 +66,7 @@ final class SettingsWindow {
     func show(_ tab: Tab? = nil) {
         if let tab { selection.tab = tab }
         if window == nil {
-            let w = GlassWindow(size: NSSize(width: 880, height: 640), minSize: NSSize(width: 760, height: 480), margin: 64)
+            let w = GlassWindow(size: NSSize(width: 1040, height: 720), minSize: NSSize(width: 860, height: 560), margin: 64)
             w.title = Self.title
             let host = NSHostingView(rootView: AppearanceRoot { SettingsRoot(selection: selection, window: w) })
             host.sizingOptions = []   // the window sets the size; the glass fills it
@@ -97,7 +97,8 @@ private struct SettingsRoot: View {
             .onAppear { window.appearance = look.surface == .glass ? nil : NSAppearance(named: .darkAqua) }
             .onChange(of: look.surface) { _, s in window.appearance = s == .glass ? nil : NSAppearance(named: .darkAqua) }
             .overlay(alignment: .top) { WindowDragArea().frame(height: 40) }   // title strip: the only place that moves the window
-            .overlay(alignment: .topLeading) { TrafficLights(window: window).padding(.top, 18).padding(.leading, 20) }
+            .overlay(alignment: .topLeading) { TrafficLights(window: window).padding(.top, look.cornerInset(18)).padding(.leading, look.cornerInset(20)) }
+            .overlay(alignment: .topTrailing) { DebugBadge() }
             .background {   // ⌘W closes, like any window
                 Button("") { window.close() }.keyboardShortcut("w").opacity(0)
             }
@@ -136,13 +137,13 @@ struct SettingsView: View {
         HStack(spacing: 0) {
             if look.surface == .glass {
                 Sidebar(selection: selection)
-                    .frame(width: 236)
+                    .frame(width: 262)
                     // concentric with the window: inner radius = outer radius − inset
                     .overlay(RoundedRectangle(cornerRadius: max(look.radius - 8, 6), style: .continuous).strokeBorder(Theme.hairline))
                     .padding(8)
             } else {   // on a gradient the sidebar is part of the surface; a hairline that fades at both ends is all that parts it
                 Sidebar(selection: selection)
-                    .frame(width: 236)
+                    .frame(width: 262)
                     .padding(.vertical, 8).padding(.leading, 8)
                     .overlay(alignment: .trailing) {
                         LinearGradient(colors: [.white.opacity(0), .white.opacity(0.13), .white.opacity(0.13), .white.opacity(0)],
@@ -175,7 +176,7 @@ private struct Sidebar: View {
     @ObservedObject var selection: TabSelection
     @Environment(\.appearance) private var look
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 9) {
             ForEach(SettingsWindow.Tab.allCases) { t in
                 SidebarRow(tab: t, selected: selection.tab == t) { selection.tab = t }
                     .anchorPreference(key: SelectionAnchor.self, value: .bounds) { selection.tab == t ? $0 : nil }
@@ -190,7 +191,7 @@ private struct Sidebar: View {
                 }
             }
         }
-        .padding(.top, 44).padding(.horizontal, 10).padding(.bottom, 12)
+        .padding(.top, 52).padding(.horizontal, 12).padding(.bottom, 14)
     }
 }
 
@@ -217,7 +218,7 @@ private struct SidebarRow: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous)
         Button(action: action) {
-            HStack(spacing: 11) {
+            HStack(spacing: 13) {
                 icon
                     .animation(Self.morph, value: selected)
                     .keyframeAnimator(initialValue: CGSize(width: 1, height: 1), trigger: selected) { v, s in
@@ -241,10 +242,10 @@ private struct SidebarRow: View {
                             }
                         }
                     }
-                Text(tab.title).font(.app(14, selected ? .semibold : .medium))
+                Text(tab.title).font(.app(15.5, selected ? .semibold : .medium))
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 9).padding(.vertical, 6)
+            .padding(.horizontal, 10).padding(.vertical, 8)
             .contentShape(shape)
             .rowHover()
 
@@ -260,12 +261,12 @@ private struct SidebarRow: View {
     /// cross-fade on the same timing.
     @ViewBuilder private var icon: some View {
         if look.idleIconStyle == .frosted && look.iconStyle == .slab {
-            GlassSlab(symbol: tab.symbol, color: tab.color, size: 30, frosted: !selected).modifier(IconHover(size: 30))
+            GlassSlab(symbol: tab.symbol, color: tab.color, size: 34, frosted: !selected).modifier(IconHover(size: 34))
         } else {
             ZStack {   // other style pairs: the new look blooms out of the old one
-                IconTile(symbol: tab.symbol, color: tab.color, size: 30, style: look.idleIconStyle)
+                IconTile(symbol: tab.symbol, color: tab.color, size: 34, style: look.idleIconStyle)
                     .opacity(selected ? 0 : 1).scaleEffect(selected ? 0.8 : 1)
-                IconTile(symbol: tab.symbol, color: tab.color, size: 30, style: look.iconStyle)
+                IconTile(symbol: tab.symbol, color: tab.color, size: 34, style: look.iconStyle)
                     .opacity(selected ? 1 : 0).scaleEffect(selected ? 1 : 0.8)
             }
         }
@@ -282,28 +283,30 @@ private struct Pane<Content: View>: View {
     var body: some View {
         // The hero stays put so you always know which page you're on; only the form below it scrolls.
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                HeroIcon(symbol: tab.symbol, color: tab.color, size: 84).padding(-20)
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(tab.title).font(.app(26, .bold))
-                    Text(tab.subtitle).font(.app(13)).foregroundStyle(.secondary)
+            HStack(spacing: 14) {
+                HeroIcon(symbol: tab.symbol, color: tab.color, size: 96).padding(-20)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(tab.title).font(.app(30, .bold))
+                    Text(tab.subtitle).font(.app(14.5)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .allowsHitTesting(false)   // clicks and scrolls on the text reach the drag area behind
             }
-            .padding(.leading, 34).padding(.trailing, 24).padding(.top, 48).padding(.bottom, 6)
+            .padding(.leading, 42).padding(.trailing, 32).padding(.top, 58).padding(.bottom, 14)
             .frame(maxWidth: .infinity, alignment: .leading)
             // Behind the header: dragging it moves the window, scrolling on it scrolls the form; the icon keeps its hover.
             .background(WindowDragArea(forwardsScroll: true))
             Form { content }
                 .formStyle(.grouped)
+                .font(.app(14))                                   // rows that don't set their own size
+                .contentMargins(.horizontal, 14, for: .scrollContent)   // the grouped boxes sit in from the page edges
                 .scrollContentBackground(.hidden)
                 .contentMargins(.bottom, 20, for: .scrollIndicators)   // keep the scroller clear of the rounded corner
         }
         .background(alignment: .top) {   // on glass, the section's color washes in from the top, like light through tinted glass
             if look.surface == .glass {
                 LinearGradient(colors: [tab.color.opacity(0.16), tab.color.opacity(0)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 280)
+                    .frame(height: 320)
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
             }
@@ -322,18 +325,18 @@ struct SettingRow<Control: View>: View {
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: Theme.rowRadius, style: .continuous)
         // Icon, text and control all centred on one line, so a slider sits level with its title block, not its first baseline.
-        HStack(alignment: .center, spacing: 12) {
-            if let symbol { IconTile(symbol: symbol, color: color, size: 32) }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.app(13.5, .medium))
+        HStack(alignment: .center, spacing: 14) {
+            if let symbol { IconTile(symbol: symbol, color: color, size: 36) }
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title).font(.app(15, .medium))
                 if let detail {
-                    Text(detail).font(.app(12)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text(detail).font(.app(13)).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             control.fixedSize()   // keeps its own width; the text wraps instead
         }
-        .padding(.vertical, 6).padding(.horizontal, 10)
+        .padding(.vertical, 9).padding(.horizontal, 10)
         .contentShape(shape)
         .rowHover()   // anywhere on the row: the row comes forward softly, its icon swells and tilts
         .padding(.horizontal, -4)
@@ -368,7 +371,7 @@ private struct ResetButton: View {
     let action: () -> Void
     var body: some View {
         Button(action: action) {
-            Image(systemName: "arrow.uturn.backward").font(.system(size: 10.5, weight: .semibold)).frame(width: 26, height: 26)
+            Image(systemName: "arrow.uturn.backward").font(.system(size: 11.5, weight: .semibold)).frame(width: 30, height: 30)
         }
             .buttonStyle(LiquidButtonStyle(shape: Circle()))
             .foregroundStyle(.secondary)
@@ -383,7 +386,7 @@ private struct Note: View {
     var symbol = "info.circle"
     var color: Color = .secondary
     var body: some View {
-        Label(text, systemImage: symbol).font(.app(11.5)).foregroundStyle(color)
+        Label(text, systemImage: symbol).font(.app(12.5)).foregroundStyle(color)
             .fixedSize(horizontal: false, vertical: true)
     }
 }
@@ -405,17 +408,17 @@ private struct PermissionsPane: View {
             Section {
                 HStack(spacing: 12) {
                     Image(systemName: missing == 0 ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
-                        .font(.app(26)).foregroundStyle(missing == 0 ? Color.green : Color.orange)
+                        .font(.app(30)).foregroundStyle(missing == 0 ? Color.green : Color.orange)
                         .contentTransition(.symbolEffect(.replace))
                     VStack(alignment: .leading, spacing: 2) {
                         Text(missing == 0 ? "All set" : "\(missing) permission\(missing == 1 ? "" : "s") missing")
-                            .font(.app(15, .semibold))
+                            .font(.app(16.5, .semibold))
                         Text(missing == 0 ? "Learn can read menus, run shortcuts and see your keys."
                                           : "Grant the ones below — no restart needed.")
-                            .font(.app(11.5)).foregroundStyle(.secondary)
+                            .font(.app(13)).foregroundStyle(.secondary)
                     }
                 }
-                .padding(.vertical, 4)
+                .padding(.vertical, 8)
                 .animation(Theme.smooth, value: missing)
 
                 PermissionRow(title: "Accessibility", granted: ax, symbol: "accessibility", color: .blue,
@@ -443,10 +446,12 @@ private struct PermissionsPane: View {
                           }))
                 Note(text: "If a permission stays off after granting, remove Learn from that list in System Settings and add it again.")
             }
-            Section("Cleaner") {
-                SettingRow(title: "Cleaner", detail: "Smart Care, Cleanup, Protection, Performance, Applications and My Clutter, in their own window.",
-                           symbol: "sparkles", color: .pink) {
-                    Button("Open") { CleanerWindow.shared.show() }.glassButton(prominent: true)
+            if Debug.build {   // the Cleaner is debug-only for now
+                Section("Cleaner") {
+                    SettingRow(title: "Cleaner", detail: "Smart Care, Cleanup, Protection, Performance, Applications and My Clutter, in their own window.",
+                               symbol: "sparkles", color: .pink) {
+                        Button("Open") { CleanerWindow.shared.show() }.glassButton(prominent: true)
+                    }
                 }
             }
             SoundSection()
@@ -471,7 +476,7 @@ private struct PermissionRow: View {
             Group {
                 if granted {
                     Label("Granted", systemImage: "checkmark.circle.fill")
-                        .font(.app(12, .medium)).foregroundStyle(.green)
+                        .font(.app(13, .medium)).foregroundStyle(.green)
                         .transition(.scale(scale: 0.8).combined(with: .opacity))
                 } else {
                     Button("Grant…", action: action).glassButton(prominent: true)
@@ -499,8 +504,12 @@ private struct AppearancePane: View {
                     Picker("", selection: SwiftUI.Binding(get: { prefs.appearance.surface }, set: { prefs.appearance.surfaceChoice = $0 })) {
                         ForEach(Appearance.Surface.allCases) { Text($0.title).tag($0) }
                     }
-                    .labelsHidden().frame(width: 190)
+                    .labelsHidden().frame(width: 210)
                 }
+                slider("Corner roundness", "How rounded the Settings and Cleaner windows are.",
+                       "square.on.square", .indigo,
+                       SwiftUI.Binding(get: { prefs.appearance.cornerRadius }, set: { prefs.appearance.cornerRadiusChoice = $0.rounded() }),
+                       0...160, format: "%.0f pt")
                 // Gradients draw their own color; only the glass takes one.
                 if prefs.appearance.surface == .glass {
                     SettingRow(title: "Glass color", symbol: "paintpalette.fill", color: .purple) {
@@ -532,9 +541,9 @@ private struct AppearancePane: View {
                         _ range: ClosedRange<Double>, percent: Bool = false, format: String = "%.0f") -> some View {
         SettingRow(title: title, detail: detail, symbol: symbol, color: color) {
             HStack(spacing: 10) {
-                Slider(value: value, in: range).sliderTicks(value.wrappedValue, in: range).frame(width: 180)
+                Slider(value: value, in: range).sliderTicks(value.wrappedValue, in: range).frame(width: 210)
                 Text(percent ? "\(Int((value.wrappedValue * 100).rounded()))%" : String(format: format, value.wrappedValue))
-                    .monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
+                    .monospacedDigit().foregroundStyle(.secondary).frame(width: 56, alignment: .trailing)
             }
         }
     }
@@ -553,7 +562,7 @@ private struct SoundSection: View {
                     Slider(value: SwiftUI.Binding(get: { prefs.appearance.soundVolume }, set: { prefs.appearance.soundVolumeChoice = $0 }),
                            in: 0...1) { editing in if !editing { Sounds.play(.click) } }
                         .sliderTicks(prefs.appearance.soundVolume, in: 0...1)
-                        .frame(width: 180)
+                        .frame(width: 210)
                     Text("\(Int((prefs.appearance.soundVolume * 100).rounded()))%")
                         .monospacedDigit().foregroundStyle(.secondary).frame(width: 44, alignment: .trailing)
                 }
@@ -660,8 +669,9 @@ private struct PanelSections: View {
                          ("⌘,", "Open these settings"), ("⌘W", "Close Learn")], id: \.1) { key, what in
                     HStack(alignment: .center) {
                         Text(what).frame(maxWidth: .infinity, alignment: .leading)
-                        Keycaps(display: key, size: 14, room: 1.5)
+                        Keycaps(display: key, size: 15, room: 1.5)
                     }
+                    .padding(.vertical, 3)
                 }
             }
         }
@@ -754,15 +764,15 @@ private struct ShortcutsPane: View {
             if groups.isEmpty {
                 Section {
                     VStack(spacing: 10) {
-                        Image(systemName: "keyboard").font(.system(size: 34, weight: .light)).foregroundStyle(.tertiary)
-                        Text("No custom shortcuts yet").font(.app(14, .semibold))
+                        Image(systemName: "keyboard").font(.system(size: 40, weight: .light)).foregroundStyle(.tertiary)
+                        Text("No custom shortcuts yet").font(.app(16, .semibold))
                         HStack(spacing: 5) {
                             Text("Open Learn, select any item, press")
-                            Keycaps(display: Prefs.shared.recordKey.shortcut.display, size: 13.5, room: 1.5)
+                            Keycaps(display: Prefs.shared.recordKey.shortcut.display, size: 15, room: 1.5)
                         }
-                        .font(.app(12)).foregroundStyle(.secondary)
+                        .font(.app(13.5)).foregroundStyle(.secondary)
                     }
-                    .frame(maxWidth: .infinity).padding(.vertical, 28)
+                    .frame(maxWidth: .infinity).padding(.vertical, 36)
                 }
             }
             ForEach(groups, id: \.scope) { g in
@@ -774,11 +784,11 @@ private struct ShortcutsPane: View {
                                 .lineLimit(1).truncationMode(.middle)
                             Spacer()
                             if let orig = appShortcut(g.scope, b.path) {
-                                Text("replaces \(orig)").font(.app(11.5)).foregroundStyle(.secondary)
+                                Text("replaces \(orig)").font(.app(12.5)).foregroundStyle(.secondary)
                             }
-                            Keycaps(display: b.shortcut.display, size: 14, room: 1.5)
+                            Keycaps(display: b.shortcut.display, size: 15, room: 1.5)
                             Button { withAnimation(Theme.snappy) { Bindings.shared.remove(g.scope, path: b.path); reload() } } label: {
-                                Image(systemName: "trash").font(.system(size: 11.5)).frame(width: 26, height: 26)
+                                Image(systemName: "trash").font(.system(size: 12.5)).frame(width: 30, height: 30)
                             }
                             .buttonStyle(LiquidButtonStyle(shape: Circle())).foregroundStyle(.secondary).help("Remove")
                         }
@@ -786,9 +796,9 @@ private struct ShortcutsPane: View {
                 } header: {
                     HStack(spacing: 7) {
                         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: g.scope) {
-                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 18, height: 18)
+                            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path)).resizable().frame(width: 20, height: 20)
                         } else {
-                            IconTile(symbol: "sparkles", color: .purple, size: 18)
+                            IconTile(symbol: "sparkles", color: .purple, size: 20)
                         }
                         Text(g.name)
                     }
@@ -873,12 +883,12 @@ struct KeyRecorder: View {
                 } else if display.isEmpty {
                     Text("Record").foregroundStyle(.secondary)
                 } else {
-                    Keycaps(display: display, size: 14, room: 1.5)
+                    Keycaps(display: display, size: 15, room: 1.5)
                 }
             }
-            .font(.app(12, .medium))
+            .font(.app(13, .medium))
             .padding(.horizontal, 6)
-            .frame(minWidth: 128, minHeight: 34, alignment: .trailing)
+            .frame(minWidth: 140, minHeight: 38, alignment: .trailing)
             .fixedSize()
             .overlay { if recording { RecordingRing().transition(.opacity) } }
             .animation(Theme.snappy, value: recording)

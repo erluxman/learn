@@ -10,7 +10,7 @@ final class CleanerWindow {
     func show() {
         if window == nil {
             let s = CleanerLayout.size
-            let w = GlassWindow(size: NSSize(width: s.width, height: s.height), minSize: NSSize(width: 860, height: 540), margin: CleanerLayout.margin)
+            let w = GlassWindow(size: NSSize(width: s.width, height: s.height), minSize: NSSize(width: 860, height: 560), margin: CleanerLayout.margin)
             w.title = "Cleaner"
             let host = NSHostingView(rootView: AppearanceRoot { CleanerRoot(state: state, window: w) })
             host.sizingOptions = []
@@ -27,15 +27,17 @@ final class CleanerWindow {
 private struct CleanerRoot: View {
     @ObservedObject var state: CleanerState
     let window: GlassWindow
+    @Environment(\.appearance) private var look
 
     var body: some View {
-        let shape = RoundedRectangle(cornerRadius: CleanerLayout.radius, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: look.radius, style: .continuous)
         CleanerSurface(state: state)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipShape(shape)
             .overlay(shape.strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
             .overlay(alignment: .top) { WindowDragArea().frame(height: 40).padding(.leading, state.module == .smartCare && state.phase == .results ? 200 : 84) }
-            .overlay(alignment: .topLeading) { TrafficLights(window: window).padding(.top, 14).padding(.leading, 16) }
+            .overlay(alignment: .topLeading) { TrafficLights(window: window).padding(.top, look.cornerInset(14)).padding(.leading, look.cornerInset(16)) }
+            .overlay(alignment: .topTrailing) { DebugBadge() }
             .background { Button("") { window.close() }.keyboardShortcut("w").opacity(0) }
             .shadow(color: .black.opacity(0.5), radius: 40, y: 22)
             .overlay(alignment: .bottom) {
