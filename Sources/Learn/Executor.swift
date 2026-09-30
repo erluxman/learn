@@ -4,7 +4,7 @@ import AppKit
 enum Executor {
     static func run(_ s: Shortcut, in app: AppEntry) {
         DispatchQueue.main.async { Sounds.play(.shortcut) }
-        DispatchQueue.main.async { KeyHUD.shared.flash(s.display, caption: s.title) }
+        DispatchQueue.main.async { KeyHUD.shared.flash(s.display.spacedKeys, caption: s.title) }
         if app.isSystem {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { postKey(s) }
             return

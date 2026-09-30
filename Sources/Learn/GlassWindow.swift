@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 /// Borderless window whose only visible shape is the SwiftUI glass inside it (one corner, no system rim).
@@ -234,12 +235,23 @@ struct WindowDragArea: NSViewRepresentable {
 }
 
 /// Lays the grips out along the glass, which sits the window's `margin` inside it.
+/// Corner grips reach in past the rounded corner's curve: the square corner itself is clear space, and clicks on
+/// clear space go through the window to whatever is behind it.
 private final class GripContainer: NSView {
+    private var corners: AnyCancellable?
+    override init(frame: NSRect) {
+        super.init(frame: frame)
+        corners = Prefs.shared.$appearance.map(\.radius).removeDuplicates().sink { [weak self] _ in self?.needsLayout = true }
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
     override func layout() {
         super.layout()
         let m = (window as? GlassWindow)?.margin ?? JellyMotion.margin
         let glass = bounds.insetBy(dx: m, dy: m)
-        let t: CGFloat = 10, c: CGFloat = 18   // edge thickness (half in, half out), corner size
+        // Edge thickness (half in, half out); corner reach inside the glass (a round corner's curve is ~0.29 × radius
+        // in from the square corner; stops short of the window buttons); corner overhang outside.
+        let t: CGFloat = 10, c = max(18, Prefs.shared.appearance.radius * 0.29 + 8), o: CGFloat = 9
         for case let g as ResizeGrip in subviews {
             let e = g.edges
             var r = NSRect.zero
@@ -248,9 +260,9 @@ private final class GripContainer: NSView {
             if e == .top { r = NSRect(x: glass.minX + c, y: glass.maxY - t / 2, width: glass.width - 2 * c, height: t) }
             if e == .bottom { r = NSRect(x: glass.minX + c, y: glass.minY - t / 2, width: glass.width - 2 * c, height: t) }
             if e.count == 2 {
-                let x = e.contains(.left) ? glass.minX - c / 2 : glass.maxX - c / 2
-                let y = e.contains(.bottom) ? glass.minY - c / 2 : glass.maxY - c / 2
-                r = NSRect(x: x, y: y, width: c, height: c)
+                let x = e.contains(.left) ? glass.minX - o : glass.maxX - c
+                let y = e.contains(.bottom) ? glass.minY - o : glass.maxY - c
+                r = NSRect(x: x, y: y, width: c + o, height: c + o)
             }
             g.frame = r
         }

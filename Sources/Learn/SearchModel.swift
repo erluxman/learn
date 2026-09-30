@@ -600,7 +600,7 @@ final class SearchModel: ObservableObject {
         let fkey = Keys.names[code]?.hasPrefix("F") == true && Keys.names[code]!.count > 1
         guard Keys.names[code] != nil, fkey || !mods.intersection([.cmd, .ctrl, .opt]).isEmpty else { NSSound.beep(); return }
         recorded = (code, mods)
-        if let s = recordedShortcut { KeyHUD.shared.flash(s.display, caption: "New shortcut for \(s.title)") }
+        if let s = recordedShortcut { KeyHUD.shared.flash(s.display.spacedKeys, caption: "New shortcut for \(s.title)") }
     }
 
     var recordedShortcut: Shortcut? {

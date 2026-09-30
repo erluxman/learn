@@ -69,11 +69,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         whenTrusted { [weak self] in
             self?.model.trusted = true
             NSLog("Learn key tap: %@", self?.keyTap.start() == true ? "started" : "FAILED")
+            PointerBlock.shared.update()   // mouse & trackpad stay off across launches if they were
             self?.scanRunningApps(onlyMissing: true)
         }
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.syncCustomKeys() }
         // Opening the app → Settings; the hotkey → search. Silent when started at login.
         if !launchedAtLogin { SettingsWindow.shared.show(AXIsProcessTrusted() ? .hotkeys : .permissions) }
+        if CommandLine.arguments.contains("--cleaner") { CleanerWindow.shared.show() }   // straight into the Cleaner
     }
 
     /// ⌘C ⌘V ⌘X ⌘A ⌘Z ⇧⌘Z in the search field. Text fields get these from the app's Edit menu, which Learn (a menu
@@ -351,6 +353,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return
             }
             if path == LearnActions.nextScreen { WindowMover.move(to: nil); return }
+            if path == LearnActions.mouse {
+                Prefs.shared.blockPointer.toggle()
+                KeyHUD.shared.flash(Prefs.shared.blockPointer ? "Mouse & trackpad off" : "Mouse & trackpad on", force: true)
+                return
+            }
             if let last = path.last, last.hasPrefix(WindowMover.prefix) {   // "Move window to <display>"
                 WindowMover.move(to: String(last.dropFirst(WindowMover.prefix.count)))
                 return
@@ -401,6 +408,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(withTitle: "Rescan System Shortcuts", action: #selector(menuSyncSystem), keyEquivalent: "").target = self
         menu.addItem(withTitle: "Show Database in Finder", action: #selector(menuOpenDB), keyEquivalent: "").target = self
         menu.addItem(.separator())
+        menu.addItem(withTitle: "Turn Off Mouse & Trackpad", action: #selector(menuToggleMouse), keyEquivalent: "").target = self
         let login = menu.addItem(withTitle: "Launch at Login", action: #selector(menuToggleLogin), keyEquivalent: "")
         login.target = self
         login.state = LoginItem.isOn ? .on : .off
@@ -437,9 +445,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         sender.state = LoginItem.isOn ? .on : .off
     }
 
+    @objc private func menuToggleMouse() { LearnActions.run(LearnActions.mouse) }
+
     /// The menu can go stale when Settings flips the switch; refresh it every time it opens.
     func menuWillOpen(_ menu: NSMenu) {
         menu.items.first { $0.action == #selector(menuToggleLogin) }?.state = LoginItem.isOn ? .on : .off
+        menu.items.first { $0.action == #selector(menuToggleMouse) }?.state = Prefs.shared.blockPointer ? .on : .off
     }
 
     // MARK: Sync

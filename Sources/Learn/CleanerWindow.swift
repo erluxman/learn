@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The Cleaner's own window (opened from Settings ▸ Cleaner): Learn's borderless glass window, so the surface can
+/// The Cleaner's own window (a secret: double-click the General page's big icon in Settings): Learn's borderless glass window, so the surface can
 /// have its own corners and the round button can hang off its bottom edge.
 final class CleanerWindow {
     static let shared = CleanerWindow()
@@ -34,7 +34,10 @@ private struct CleanerRoot: View {
         CleanerSurface(state: state)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .clipShape(shape)
-            .overlay(shape.strokeBorder(.white.opacity(0.12), lineWidth: 0.75))
+            .modifier(CleanerFinish(shape: shape, glass: look.surface == .glass))
+            // As Learn Settings: glass follows the system look, the gradient is always dark.
+            .onAppear { window.appearance = look.surface == .glass ? nil : NSAppearance(named: .darkAqua) }
+            .onChange(of: look.surface) { _, s in window.appearance = s == .glass ? nil : NSAppearance(named: .darkAqua) }
             .overlay(alignment: .top) { WindowDragArea().frame(height: 40).padding(.leading, state.module == .smartCare && state.phase == .results ? 200 : 84) }
             .overlay(alignment: .topLeading) { TrafficLights(window: window).padding(.top, look.cornerInset(14)).padding(.leading, look.cornerInset(16)) }
             .overlay(alignment: .topTrailing) { DebugBadge() }
@@ -48,8 +51,20 @@ private struct CleanerRoot: View {
             .padding(window.margin)
     }
 
+    /// Same surface as Settings (Settings ▸ Appearance), built the same way: glass with its rim, or over the gradient a
+    /// fine light edge.
+    private struct CleanerFinish<S: InsettableShape>: ViewModifier {
+        let shape: S
+        let glass: Bool
+        func body(content: Content) -> some View {
+            if glass { content.liquidGlass(in: shape).glassRim(shape) }
+            else { content.overlay(shape.strokeBorder(.white.opacity(0.12), lineWidth: 0.75)) }
+        }
+    }
+
     /// The button centres under the page, not the whole window.
     private var sidebarShift: CGFloat {
-        (state.module == .smartCare && state.phase != .home ? CleanerLayout.rail : CleanerLayout.sidebar) / 2
+        state.module == .smartCare && state.phase != .home ? CleanerLayout.rail / 2
+            : (CleanerLayout.sidebar - CleanerLayout.pageTrailing) / 2   // under the page's centred content
     }
 }

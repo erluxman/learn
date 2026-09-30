@@ -21,6 +21,7 @@ final class SettingsWindow {
             case .shortcuts: "My Shortcuts"
             }
         }
+        var gradientKey: String { "settings.\(rawValue)" }   // Prefs.pageGradients
         var subtitle: String {
             switch self {
             case .permissions: "Permissions, launch at login, the Cleaner and sounds."
@@ -111,11 +112,15 @@ private struct SettingsRoot: View {
 /// The Colorful surface: the page's own living gradient (Cleaner-style).
 private struct SettingsBackdrop: View {
     let tab: SettingsWindow.Tab
+    @ObservedObject private var prefs = Prefs.shared
     var body: some View {
         // One surface that changes color in place (Core Animation fades the colors): a crossfade of two surfaces
         // would be half see-through midway, letting the desktop show through.
-        SurfaceBackdrop(color: tab.color)
-            .allowsHitTesting(false)
+        Group {
+            if let p = GradientPreset.pick(tab.gradientKey) { SurfaceBackdrop(colors: p.colors) }
+            else { SurfaceBackdrop(color: tab.color) }
+        }
+        .allowsHitTesting(false)
     }
 }
 
@@ -135,22 +140,10 @@ struct SettingsView: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            if look.surface == .glass {
-                Sidebar(selection: selection)
-                    .frame(width: 262)
-                    // concentric with the window: inner radius = outer radius − inset
-                    .overlay(RoundedRectangle(cornerRadius: max(look.radius - 8, 6), style: .continuous).strokeBorder(Theme.hairline))
-                    .padding(8)
-            } else {   // on a gradient the sidebar is part of the surface; a hairline that fades at both ends is all that parts it
-                Sidebar(selection: selection)
-                    .frame(width: 262)
-                    .padding(.vertical, 8).padding(.leading, 8)
-                    .overlay(alignment: .trailing) {
-                        LinearGradient(colors: [.white.opacity(0), .white.opacity(0.13), .white.opacity(0.13), .white.opacity(0)],
-                                       startPoint: .top, endPoint: .bottom)
-                            .frame(width: 1).padding(.vertical, 90)
-                    }
-            }
+            // The sidebar lies flat on the surface, no divider.
+            Sidebar(selection: selection)
+                .frame(width: 262)
+                .padding(.vertical, 8).padding(.leading, 8)
             Group {
                 switch selection.tab {
                 case .permissions: PermissionsPane()
@@ -284,15 +277,21 @@ private struct Pane<Content: View>: View {
         // The hero stays put so you always know which page you're on; only the form below it scrolls.
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 14) {
-                HeroIcon(symbol: tab.symbol, color: tab.color, size: 96).padding(-20)
+                HeroIcon(symbol: tab.symbol, color: tab.color, size: 96)
+                    .onTapGesture(count: 2) { if tab == .permissions { CleanerWindow.shared.show() } }   // secret way into the Cleaner
+                    .padding(-20)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(tab.title).font(.app(30, .bold))
+                    HStack(spacing: 12) {
+                        Text(tab.title).font(.app(30, .bold))
+                            .allowsHitTesting(false)   // clicks and scrolls on the text reach the drag area behind
+                        GradientDot(page: tab.gradientKey, fallback: SurfaceBackdrop(color: tab.color).bg)
+                    }
                     Text(tab.subtitle).font(.app(14.5)).foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .allowsHitTesting(false)
                 }
-                .allowsHitTesting(false)   // clicks and scrolls on the text reach the drag area behind
             }
-            .padding(.leading, 42).padding(.trailing, 32).padding(.top, 58).padding(.bottom, 14)
+            .padding(.leading, 25).padding(.trailing, 32).padding(.top, 58).padding(.bottom, 14)   // icon's left edge on the cards' edge
             .frame(maxWidth: .infinity, alignment: .leading)
             // Behind the header: dragging it moves the window, scrolling on it scrolls the form; the icon keeps its hover.
             .background(WindowDragArea(forwardsScroll: true))
@@ -305,8 +304,7 @@ private struct Pane<Content: View>: View {
         }
         .background(alignment: .top) {   // on glass, the section's color washes in from the top, like light through tinted glass
             if look.surface == .glass {
-                LinearGradient(colors: [tab.color.opacity(0.16), tab.color.opacity(0)], startPoint: .top, endPoint: .bottom)
-                    .frame(height: 320)
+                PageWash(page: tab.gradientKey, color: tab.color)
                     .ignoresSafeArea()
                     .allowsHitTesting(false)
             }
@@ -394,6 +392,7 @@ private struct Note: View {
 // MARK: Permissions
 
 private struct PermissionsPane: View {
+    @ObservedObject private var prefs = Prefs.shared
     @State private var ax = AXIsProcessTrusted()
     @State private var post = CGPreflightPostEventAccess()
     @State private var listen = CGPreflightListenEventAccess()
@@ -445,6 +444,21 @@ private struct PermissionsPane: View {
                               login = LoginItem.isOn
                           }))
                 Note(text: "If a permission stays off after granting, remove Learn from that list in System Settings and add it again.")
+            }
+            Section("Practice") {
+                ToggleRow(title: "Turn off mouse & trackpad",
+                          detail: "Every mouse and trackpad stops working, including connected ones, so you practice shortcuts. Learn's own clicks still work.",
+                          symbol: "computermouse.fill", color: .red, isOn: $prefs.blockPointer)
+                Note(text: "Turn them back on with \(Bindings.shared.globals.first { $0.path == LearnActions.mouse }?.shortcut.display.macKeyWords ?? "its hotkey") in any app, or from Learn's menu bar icon.",
+                     symbol: "keyboard.fill", color: .orange)
+            }
+            Section("Shortcut keys") {
+                SettingRow(title: "Key colors", detail: "How keys look wherever Learn shows a shortcut.", symbol: "keyboard.fill", color: .red) {
+                    HStack(spacing: 14) {
+                        Keycaps(display: "⇧⌘T", size: 14, room: 1.5)
+                        GradientPicker(selection: $prefs.keyGradient, fallback: Keycap.defaultGradient, size: 24)
+                    }
+                }
             }
             if Debug.build {   // the Cleaner is debug-only for now
                 Section("Cleaner") {
@@ -588,6 +602,7 @@ private struct HotkeysPane: View {
         case LearnActions.rightClick: ("cursorarrow.click.2", .blue)
         case LearnActions.pointer: ("cursorarrow.motionlines", .green)
         case LearnActions.nextScreen: ("rectangle.2.swap", .teal)
+        case LearnActions.mouse: ("computermouse.fill", .red)
         case LearnActions.settings: ("gearshape.fill", .gray)
         default: ("sparkles", .purple)
         }
@@ -908,7 +923,7 @@ struct KeyRecorder: View {
             if e.keyCode == 53, mods.isEmpty { stop(); return nil }
             if Recorder.acceptable(code: Int(e.keyCode), mods: mods, panelKey: panelKey) {
                 onRecord(Int(e.keyCode), mods); stop()
-                KeyHUD.shared.flash(Shortcut(path: [], key: Keys.names[Int(e.keyCode)] ?? "", keyCode: Int(e.keyCode), mods: mods).display, caption: "Recorded")
+                KeyHUD.shared.flash(Shortcut(path: [], key: Keys.names[Int(e.keyCode)] ?? "", keyCode: Int(e.keyCode), mods: mods).display.spacedKeys, caption: "Recorded")
             }
             else { NSSound.beep() }
             return nil

@@ -23,6 +23,12 @@ final class Prefs: ObservableObject {
     @Published var searchFiles: Bool { didSet { d.set(searchFiles, forKey: "searchFiles") } }
     @Published var quickAnswers: Bool { didSet { d.set(quickAnswers, forKey: "quickAnswers") } }
     @Published var chordRightClick: Bool { didSet { d.set(chordRightClick, forKey: "chordRightClick") } }
+    /// Gradient picked for each page ("settings.<tab>", "cleaner.<module>") → GradientPreset name.
+    @Published var pageGradients: [String: String] { didSet { d.set(pageGradients, forKey: "pageGradients") } }
+    /// Gradient of the shortcut keys (Keycap) → GradientPreset name; nil = their pink → orange.
+    @Published var keyGradient: String? { didSet { d.set(keyGradient, forKey: "keyGradient") } }
+    /// Mouse and trackpad turned off, to practice shortcuts (PointerBlock).
+    @Published var blockPointer: Bool { didSet { d.set(blockPointer, forKey: "blockPointer"); PointerBlock.shared.update() } }
     /// Set by AppDelegate: false when macOS refused the panel hotkey (another app owns it).
     @Published var panelKeyRegistered = true
 
@@ -40,6 +46,9 @@ final class Prefs: ObservableObject {
         searchFiles = d.bool(forKey: "searchFiles")
         quickAnswers = d.bool(forKey: "quickAnswers")
         chordRightClick = d.bool(forKey: "chordRightClick")
+        blockPointer = d.bool(forKey: "blockPointer")
+        pageGradients = d.dictionary(forKey: "pageGradients") as? [String: String] ?? [:]
+        keyGradient = d.string(forKey: "keyGradient")
     }
 
     private static func load(_ k: String, _ def: Binding) -> Binding {

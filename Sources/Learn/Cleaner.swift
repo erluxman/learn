@@ -10,6 +10,7 @@ enum CleanerModule: String, CaseIterable, Identifiable {
     case smartCare, cleanup, protection, performance, applications, clutter
 
     var id: Self { self }
+    var gradientKey: String { "cleaner.\(rawValue)" }   // Prefs.pageGradients
     var title: String {
         switch self {
         case .smartCare: "Smart Care"
@@ -239,6 +240,11 @@ enum CleanerLayout {
     static let size = CGSize(width: 1040, height: 720)   // same as Learn Settings
     static let margin: CGFloat = 96         // clear room: shadow, and the button's lower half and halo
     static let sidebar: CGFloat = 232
+    /// Room between the sidebar's items (204 wide, centred) and its edges.
+    static let sidebarInset: CGFloat = (sidebar - 204) / 2
+    /// Taken off the page's right, so what it centres sits midway between the sidebar's items and the window's edge —
+    /// twice the arithmetic amount, which is what looks centred.
+    static let pageTrailing: CGFloat = sidebarInset * 2
     static let rail: CGFloat = 78
     static let firstRow: CGFloat = 128      // centre of the first sidebar row, from the top
     static let rowStep: CGFloat = 70
@@ -250,15 +256,24 @@ enum CleanerLayout {
 /// surface's bottom edge by the window root, since half of it hangs outside.
 struct CleanerSurface: View {
     @ObservedObject var state: CleanerState
+    @Environment(\.appearance) private var look
 
     private var compact: Bool { state.module == .smartCare && state.phase != .home }
 
     var body: some View {
         ZStack(alignment: .topLeading) {
             ZStack {
-                CleanerBackdrop(module: state.module)
-                    .id(state.module)
-                    .transition(.opacity)
+                if look.surface == .glass {   // as Settings on glass: the module's color washes in from the top, over the page only
+                    PageWash(page: state.module.gradientKey, color: state.module.glow)
+                        .frame(maxHeight: .infinity, alignment: .top)
+                        .padding(.leading, compact ? CleanerLayout.rail : CleanerLayout.sidebar)
+                        .id(state.module)
+                        .transition(.opacity)
+                } else {
+                    CleanerBackdrop(module: state.module)
+                        .id(state.module)
+                        .transition(.opacity)
+                }
             }
             .animation(CleanerMotion.swap, value: state.module)
             .allowsHitTesting(false)
@@ -305,8 +320,8 @@ struct CleanerSurface: View {
     @ViewBuilder private var page: some View {
         switch (state.module, state.phase) {
         case (.smartCare, .scanning), (.smartCare, .results): SmartCareGrid(state: state)
-        case (_, .results): ModuleResults(state: state)
-        default: ModuleHome(state: state)
+        case (_, .results): ModuleResults(state: state).padding(.trailing, CleanerLayout.pageTrailing)
+        default: ModuleHome(state: state).padding(.trailing, CleanerLayout.pageTrailing)
         }
     }
 
@@ -338,7 +353,11 @@ struct CleanerSurface: View {
 /// The module's gradient with slow-drifting lights; the whole window shares it.
 struct CleanerBackdrop: View {
     let module: CleanerModule
-    var body: some View { SurfaceBackdrop(bg: module.bg, glow: module.glow, accent: module.accent) }
+    @ObservedObject private var prefs = Prefs.shared
+    var body: some View {
+        if let p = GradientPreset.pick(module.gradientKey) { SurfaceBackdrop(colors: p.colors) }
+        else { SurfaceBackdrop(bg: module.bg, glow: module.glow, accent: module.accent) }
+    }
 }
 
 /// A living gradient surface: `bg` top-left → bottom-right, a glow near the upper middle, an accent light drifting
@@ -453,20 +472,27 @@ extension Color {
 private struct CleanerSidebar: View {
     @ObservedObject var state: CleanerState
     let compact: Bool
+    @Environment(\.appearance) private var look
 
     var body: some View {
         ZStack(alignment: .topLeading) {
-            // One pill that slides to the selected row, like Learn Settings.
+            // The selection, exactly as Learn Settings draws it: on glass a liquid blob in the module's color that flows
+            // between rows, on the gradient a frosted pill that slides.
             if let i = CleanerModule.allCases.firstIndex(of: state.module) {
-                let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
-                shape.fill(.white.opacity(0.12))
-                    .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.08)],
-                                                               startPoint: .top, endPoint: .bottom), lineWidth: 1))
-                    .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
-                    .frame(width: compact ? 54 : 204, height: 54)
-                    .position(x: compact ? CleanerLayout.rail / 2 + 6 : CleanerLayout.sidebar / 2,
-                              y: CleanerLayout.firstRow + CGFloat(i) * CleanerLayout.rowStep)
-                    .animation(.spring(response: 0.45, dampingFraction: 0.78), value: i)
+                let w: CGFloat = compact ? 54 : 204
+                let x = compact ? CleanerLayout.rail / 2 + 6 : CleanerLayout.sidebar / 2, y = CleanerLayout.firstRow + CGFloat(i) * CleanerLayout.rowStep
+                if look.surface == .glass {
+                    LiquidBlob(target: CGRect(x: x - w / 2, y: y - 27, width: w, height: 54), tint: state.module.glow)
+                } else {
+                    let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    shape.fill(.white.opacity(0.13))
+                        .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.28), .white.opacity(0.08)],
+                                                                   startPoint: .top, endPoint: .bottom), lineWidth: 1))
+                        .shadow(color: .black.opacity(0.12), radius: 6, y: 3)
+                        .frame(width: w, height: 54)
+                        .position(x: x, y: y)
+                        .animation(.spring(response: 0.45, dampingFraction: 0.78), value: i)
+                }
             }
             ForEach(Array(CleanerModule.allCases.enumerated()), id: \.element) { i, m in
                 SidebarItem(module: m, selected: state.module == m, compact: compact,
@@ -482,16 +508,7 @@ private struct CleanerSidebar: View {
                     .position(x: compact ? CleanerLayout.rail / 2 + 6 : CleanerLayout.sidebar / 2, y: g.size.height - 44)
             }
         }
-        .frame(maxHeight: .infinity)
-        // The only separation from the page: a hairline that fades out at both ends.
-        .overlay(alignment: .trailing) {
-            if !compact {
-                LinearGradient(colors: [.white.opacity(0), .white.opacity(0.13), .white.opacity(0.13), .white.opacity(0)],
-                               startPoint: .top, endPoint: .bottom)
-                    .frame(width: 1)
-                    .padding(.top, 140).padding(.bottom, 170)
-            }
-        }
+        .frame(maxHeight: .infinity)   // no divider: the sidebar lies flat on the surface, like Settings'
     }
 }
 
@@ -501,7 +518,6 @@ private struct SidebarItem: View {
     let compact: Bool
     let progress: Double?
     let action: () -> Void
-    @State private var hover = false
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -511,20 +527,19 @@ private struct SidebarItem: View {
                     .frame(width: 30, height: 30)
                     .modifier(IconHover(size: 30))
                 if !compact {
-                    Text(module.title).font(.system(size: 14.5, weight: .medium)).fixedSize()
+                    Text(module.title).font(.app(15.5, selected ? .semibold : .medium)).lineLimit(1)
                     Spacer(minLength: 0)
                 }
             }
             .padding(.horizontal, compact ? 10 : 18)
             .frame(width: compact ? 54 : 204, height: 54)
-            .background { if hover && !selected { shape.fill(.white.opacity(0.06)) } }
             .overlay(alignment: .topTrailing) {
                 if let progress { ProgressPie(value: progress).frame(width: 13, height: 13).offset(x: 4, y: -4) }
             }
             .contentShape(shape)
+            .rowHover()   // as Learn Settings' rows: a gentle swell, and the icon leans toward the pointer
         }
-        .buttonStyle(CleanerPressStyle())
-        .onHover { h in withAnimation(CleanerMotion.quick) { hover = h } }
+        .buttonStyle(RowPressStyle(sound: false))   // the action plays the click
     }
 }
 
@@ -567,7 +582,7 @@ private struct AssistantItem: View {
             }
             .frame(width: 28, height: 28)
             if !compact {
-                Text("Assistant").font(.system(size: 14.5, weight: .medium))
+                Text("Assistant").font(.app(15.5, .medium))
                 Spacer(minLength: 0)
             }
         }
@@ -608,9 +623,10 @@ private struct ModuleHome: View {
                 HStack(spacing: 8) {
                     Text(scanning ? m.scanning : m.heading).font(.system(size: 36, weight: .regular))
                         .contentTransition(.opacity)
-                    if m == .clutter && !scanning { NewBadge() }
+                        .allowsHitTesting(false)
+                    if m == .clutter && !scanning { NewBadge().allowsHitTesting(false) }
+                    if !scanning { GradientDot(page: m.gradientKey, fallback: m.bg).padding(.leading, 4) }
                 }
-                .allowsHitTesting(false)
                 Text(scanning ? state.ticker : m.subtitle)
                     .font(.system(size: 15)).foregroundStyle(.white.opacity(0.78))
                     .multilineTextAlignment(.center).lineSpacing(4)
@@ -861,7 +877,10 @@ private struct ModuleResults: View {
         GeometryReader { g in
             ModuleIcon(module: m, size: 220).position(x: g.size.width / 2, y: g.size.height * 0.36)
             VStack(spacing: 10) {
-                Text("Scan complete").font(.system(size: 34))
+                HStack(spacing: 12) {
+                    Text("Scan complete").font(.system(size: 34))
+                    GradientDot(page: m.gradientKey, fallback: m.bg)
+                }
                 Text(line).font(.system(size: 15)).foregroundStyle(.white.opacity(0.78))
                 Button("Start Over") { state.stop() }.buttonStyle(ReviewStyle()).padding(.top, 6)
             }

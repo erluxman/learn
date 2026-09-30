@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 
 /// Look of the shortcut bubble. Edited in Settings ▸ On Screen (HUDStyleSections).
 struct HUDStyle: Codable, Hashable {
@@ -18,27 +19,47 @@ struct HUDStyle: Codable, Hashable {
         var ns: NSColor { NSColor(srgbRed: r, green: g, blue: b, alpha: a) }
     }
 
+    // Settings (Settings ▸ On Screen): where, font, animation, and the background as in Appearance.
     var position = Position.bottomCenter
-    var margin = 64.0                 // distance from the screen edge
     var font = ""                     // "" system · ".rounded" · ".mono" · a font family name
-    var bold = false                  // Spotlight's text is regular weight
-    var keySize = 26.0                // Spotlight's search text
-    var captionSize = 15.0            // Spotlight's subtitles
+    var motion = Motion.jelly
+    var tint = RGBA(NSColor.systemPurple)   // Liquid glass takes it at `tintStrength`; 0 = Spotlight's plain dark glass
+    var tintStrength = 0.0
+    var gradient = false                    // the color as a diagonal gradient of two neighbouring shades, not flat
+    var cornerRadius = 26.0           // as set; drawn as `corner`
+
+    // Settled looks, no longer settings (older saved values for them are ignored):
+    var margin: Double { 64 }         // distance from the screen edge
+    var bold: Bool { false }          // Spotlight's text is regular weight
+    var keySize: Double { 26 }        // Spotlight's search text
+    var captionSize: Double { 15 }    // Spotlight's subtitles
     var showCaption: Bool { false }   // keys only; the command name is no longer shown (or a setting)
     var textColor: RGBA { RGBA(.white) }
-    var background = RGBA(NSColor(white: 0.1, alpha: 0.55))
-    var frosted = true                // before `backdrop` existed: blur what's behind, tinted by `background`
-    var backdrop: Backdrop? = .spotlight // nil in styles saved before it existed → derived from `frosted`
-    var cornerRadius = 26.0
-    var paddingH = 24.0
-    var paddingV = 12.0
-    var shadow = true
-    var duration = 1.4                // seconds on screen
-    var motion = Motion.jelly
-    var animationSpeed = 0.25         // seconds
+    var background: RGBA { RGBA(NSColor(white: 0.1, alpha: 0.55)) }
+    var paddingH: Double { 24 }
+    var paddingV: Double { 12 }
+    var shadow: Bool { true }
+    var duration: Double { 1.4 }      // seconds on screen
+    var animationSpeed: Double { 0.25 }   // seconds
 
-    /// Always Spotlight's dark Liquid Glass at its own defaults; older saved backdrops and their looks are ignored.
+    /// Liquid glass is Spotlight's dark glass; older saved backdrops and their looks are ignored.
     var box: Backdrop { .spotlight }
+    /// Liquid glass tinted with the chosen color at the chosen intensity; nil = plain (and on the gradient).
+    var glassTint: NSColor? {
+        guard tintStrength > 0 else { return nil }
+        return tint.ns.withAlphaComponent(tintStrength)
+    }
+    /// The color washed inside the glass: flat, or a lighter hue sliding into a deeper one.
+    var washColors: [NSColor] {
+        let c = tint.ns.usingColorSpace(.sRGB) ?? .systemPurple
+        guard gradient else { return [c, c] }
+        var h: CGFloat = 0, s: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        c.getHue(&h, saturation: &s, brightness: &b, alpha: &a)
+        func tone(_ dh: CGFloat, _ db: CGFloat) -> NSColor {
+            NSColor(hue: (h + dh + 1).truncatingRemainder(dividingBy: 1), saturation: s, brightness: min(1, b * db), alpha: 1)
+        }
+        return [tone(-0.08, 1.15), tone(0.08, 0.7)]
+    }
 
     /// One backdrop's own settings. Each backdrop starts from its defaults and remembers your changes until reset.
     struct BoxLook: Codable, Hashable {
@@ -65,6 +86,10 @@ struct HUDStyle: Codable, Hashable {
     mutating func setLook(_ l: BoxLook, for b: Backdrop) { boxLooks = (boxLooks ?? [:]).merging([b.rawValue: l]) { $1 } }
     mutating func resetLook(_ b: Backdrop) { boxLooks?[b.rawValue] = nil }
     var current: BoxLook { defaultLook(.spotlight) }
+
+    /// Half the bubble's height: rounder than that and the ends pinch instead of making a capsule.
+    var maxCorner: Double { (NSLayoutManager().defaultLineHeight(for: keyFont()) + paddingV * 2 + 2) / 2 }
+    var corner: Double { min(cornerRadius, maxCorner) }
 
     func keyFont() -> NSFont { Self.font(font, size: keySize, bold: bold) }
     func captionFont() -> NSFont { Self.font(font, size: captionSize, bold: false) }
@@ -111,7 +136,7 @@ final class KeyHUD {
         let fkey = name.hasPrefix("F") && name.count > 1
         guard fkey || !mods.isDisjoint(with: [.cmd, .ctrl, .opt]) else { return }
         let display = Shortcut(path: [], key: name, keyCode: code, mods: mods).display
-        flash(display, caption: Self.title(code: code, mods: mods, app: app))
+        flash(display.spacedKeys, caption: Self.title(code: code, mods: mods, app: app))
     }
 
     /// `force`: show even when the display is turned off (the Customize window's preview).
@@ -360,12 +385,16 @@ final class KeyHUD {
             if #available(macOS 26, *) {
                 let glass = NSGlassEffectView()
                 glass.style = st.box == .glass ? .clear : .regular
-                glass.cornerRadius = st.cornerRadius
+                glass.cornerRadius = st.corner
                 glass.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
                 content.wantsLayer = true
-                content.layer?.cornerRadius = st.cornerRadius
+                content.layer?.cornerRadius = st.corner
                 content.layer?.cornerCurve = .continuous
-                if st.box != .tinted {
+                if let tint = st.glassTint {   // the glass's own tint is faint, so the color also washes the inside
+                    glass.tintColor = tint
+                    content.layer?.masksToBounds = true
+                    pin(GradientView(st.washColors, opacity: st.tintStrength * 0.7), in: content, below: true)
+                } else if st.box != .tinted {
                     if look.darken > 0 { glass.tintColor = NSColor.black.withAlphaComponent(look.darken) }
                 } else {   // the glass's own tint is faint, so the color also washes the inside of the glass
                     glass.tintColor = look.color.ns.withAlphaComponent(look.opacity)
@@ -380,11 +409,11 @@ final class KeyHUD {
         case .frosted, .solid:
             let box = NSView()
             box.wantsLayer = true
-            box.layer?.cornerRadius = st.cornerRadius
+            box.layer?.cornerRadius = st.corner
             box.layer?.cornerCurve = .continuous
             box.layer?.masksToBounds = true
             if st.box == .frosted, look.material.isTunable {
-                pin(BackdropBlurView(look.backdropParams(corner: st.cornerRadius)), in: box)
+                pin(BackdropBlurView(look.backdropParams(corner: st.corner)), in: box)
             } else if st.box != .solid {
                 let fx = NSVisualEffectView()
                 fx.material = look.material.appKitMaterial ?? .hudWindow
@@ -394,10 +423,8 @@ final class KeyHUD {
                 fx.appearance = NSAppearance(named: dark ? .vibrantDark : .vibrantLight)
                 pin(fx, in: box)
             }
-            let tint = NSView()
-            tint.wantsLayer = true
-            tint.layer?.backgroundColor = look.color.ns.withAlphaComponent(look.opacity).cgColor
-            pin(tint, in: box)
+            pin(st.glassTint == nil ? GradientView([look.color.ns, look.color.ns], opacity: look.opacity)
+                                    : GradientView(st.washColors, opacity: st.tintStrength), in: box)
             pin(content, in: box)
             shine(box.layer, look.shine)
             root = box
@@ -423,9 +450,10 @@ final class KeyHUD {
         layer.borderColor = NSColor.white.withAlphaComponent(amount * 0.7).cgColor
     }
 
-    private func pin(_ v: NSView, in parent: NSView, _ inset: NSEdgeInsets = NSEdgeInsets()) {
+    /// `below`: behind the views already in `parent`.
+    private func pin(_ v: NSView, in parent: NSView, _ inset: NSEdgeInsets = NSEdgeInsets(), below: Bool = false) {
         v.translatesAutoresizingMaskIntoConstraints = false
-        parent.addSubview(v)
+        if below { parent.addSubview(v, positioned: .below, relativeTo: nil) } else { parent.addSubview(v) }
         NSLayoutConstraint.activate([
             v.leadingAnchor.constraint(equalTo: parent.leadingAnchor, constant: inset.left),
             v.trailingAnchor.constraint(equalTo: parent.trailingAnchor, constant: -inset.right),
@@ -440,6 +468,30 @@ extension HUDStyle.BoxLook {
     func backdropParams(corner: CGFloat) -> BackdropBlurView.Params {
         .init(radius: blur * HUDStyle.maxBlurRadius, saturation: material.preset.saturation, brightness: material.brightness,
               progressive: material == .progressive, corner: corner)
+    }
+}
+
+/// A diagonal gradient fill, top-left to bottom-right.
+private final class GradientView: NSView {
+    override func makeBackingLayer() -> CALayer { CAGradientLayer() }
+    convenience init(_ colors: [NSColor], opacity: Double) {
+        self.init(frame: .zero)
+        wantsLayer = true
+        guard let g = layer as? CAGradientLayer else { return }
+        g.colors = colors.map { $0.withAlphaComponent(opacity).cgColor }
+        g.startPoint = CGPoint(x: 0, y: 1)
+        g.endPoint = CGPoint(x: 1, y: 0)
+    }
+}
+
+extension String {
+    /// A shortcut as the bubble shows it, each key apart so it reads at a glance: "⇧⌘T" → "⇧ + ⌘ + T".
+    var spacedKeys: String {
+        var rest = Substring(self), keys: [String] = []
+        if rest.hasPrefix("fn ") { keys.append("fn"); rest = rest.dropFirst(3) }
+        while let c = rest.first, "⌃⌥⇧⌘".contains(c), rest.count > 1 { keys.append(String(c)); rest = rest.dropFirst() }
+        keys.append(String(rest))
+        return keys.joined(separator: " + ")
     }
 }
 

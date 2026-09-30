@@ -11,42 +11,54 @@ struct HUDStyleSections: View {
         Section {
             preview
                 .listRowInsets(EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10))
-            slider("Distance from edge", style.margin, 0...300, "%.0f pt")
+            SettingRow(title: "Animation", detail: "How the bubble appears and leaves.", symbol: "wand.and.stars", color: .orange) {
+                Picker("", selection: style.motion) {
+                    Text("Jelly").tag(HUDStyle.Motion.jelly)
+                    Text("Fade").tag(HUDStyle.Motion.fade)
+                    Text("Slide").tag(HUDStyle.Motion.slide)
+                    Text("Pop").tag(HUDStyle.Motion.pop)
+                    Text("None").tag(HUDStyle.Motion.none)
+                }
+                .labelsHidden().frame(width: 210)
+            }
+            SettingRow(title: "Font", symbol: "textformat", color: .blue) {
+                Picker("", selection: style.font) {
+                    Text("System").tag("")
+                    Text("System Rounded").tag(".rounded")
+                    Text("System Monospaced").tag(".mono")
+                    Divider()
+                    ForEach(Self.families, id: \.self) { Text($0).tag($0) }
+                }
+                .labelsHidden().frame(width: 210)
+            }
         } header: {
             Text("Shortcut bubble")
         } footer: {
             Text("Click a spot on the preview to move the bubble there. Pointer mode's hint uses this style too.")
                 .font(.system(size: 12.5)).foregroundStyle(.secondary)
         }
-        Section("Text") {
-            Picker("Font", selection: style.font) {
-                Text("System").tag("")
-                Text("System Rounded").tag(".rounded")
-                Text("System Monospaced").tag(".mono")
-                Divider()
-                ForEach(Self.families, id: \.self) { Text($0).tag($0) }
+        // Background: Liquid glass, like Spotlight, in a color of your choice.
+        Section("Background") {
+            SettingRow(title: "Glass color", symbol: "paintpalette.fill", color: .purple) {
+                ColorPicker("", selection: SwiftUI.Binding(get: { Color(nsColor: prefs.hudStyle.tint.ns) },
+                                                           set: { prefs.hudStyle.tint = HUDStyle.RGBA(NSColor($0)) }),
+                            supportsOpacity: false)
+                    .labelsHidden()
             }
-            Toggle("Bold keys", isOn: style.bold)
-            slider("Key size", style.keySize, 12...96, "%.0f pt")
-        }
-        Section("Box") {
-            slider("Rounded corners", style.cornerRadius, 0...40, "%.0f pt")
-            slider("Padding left/right", style.paddingH, 0...80, "%.0f pt")
-            slider("Padding top/bottom", style.paddingV, 0...60, "%.0f pt")
-            Toggle("Shadow", isOn: style.shadow)
-        }
-        Section("Timing & animation") {
-            slider("Stays on screen", style.duration, 0.3...6, "%.1f s")
-            Picker("Appear / disappear", selection: style.motion) {
-                Text("Jelly").tag(HUDStyle.Motion.jelly)
-                Text("Fade").tag(HUDStyle.Motion.fade)
-                Text("Slide").tag(HUDStyle.Motion.slide)
-                Text("Pop").tag(HUDStyle.Motion.pop)
-                Text("None").tag(HUDStyle.Motion.none)
+            row("Color intensity", "How strongly the glass takes the color. 0 keeps it Spotlight's plain dark glass.", "drop.fill", .blue,
+                style.tintStrength, 0...1, "\(Int((prefs.hudStyle.tintStrength * 100).rounded()))%")
+            SettingRow(title: "Gradient", detail: "A lighter shade of the color sliding into a deeper one, instead of one flat color.",
+                       symbol: "circle.lefthalf.filled", color: .pink) {
+                Toggle("", isOn: style.gradient).labelsHidden().toggleStyle(.switch)
             }
-            slider("Animation speed", style.animationSpeed, 0.05...1, "%.2f s").disabled(prefs.hudStyle.motion == .none)
+            .disabled(prefs.hudStyle.tintStrength == 0)
+            row("Corner roundness", "How rounded the bubble is.", "square.on.square", .indigo,
+                SwiftUI.Binding(get: { prefs.hudStyle.corner }, set: { prefs.hudStyle.cornerRadius = $0.rounded() }),
+                0...prefs.hudStyle.maxCorner.rounded(.down), String(format: "%.0f pt", prefs.hudStyle.corner))
+        }
+        Section {
             HStack {
-                Button("Show on Screen") { KeyHUD.shared.flash("⇧⌘T", caption: "Reopen Closed Tab", force: true) }
+                Button("Show on Screen") { KeyHUD.shared.flash("⇧⌘T".spacedKeys, caption: "Reopen Closed Tab", force: true) }
                     .glassButton()
                 Spacer()
                 Button("Reset to Spotlight Look") { withAnimation(Theme.smooth) { prefs.hudStyle = HUDStyle() } }
@@ -88,9 +100,9 @@ struct HUDStyleSections: View {
     }
 
     private func bubble(_ st: HUDStyle) -> some View {
-        let shape = RoundedRectangle(cornerRadius: st.cornerRadius, style: .continuous)
+        let shape = RoundedRectangle(cornerRadius: st.corner, style: .continuous)
         return VStack(spacing: 2) {
-            Text("⇧⌘T").font(Font(st.keyFont() as CTFont))
+            Text("⇧⌘T".spacedKeys).font(Font(st.keyFont() as CTFont))
             if st.showCaption {
                 Text("Reopen Closed Tab").font(Font(st.captionFont() as CTFont)).opacity(0.75)
             }
@@ -122,12 +134,14 @@ struct HUDStyleSections: View {
                          y: a.vertical == .top ? 0 : a.vertical == .bottom ? 1 : 0.5)
     }
 
-    private func slider(_ title: String, _ value: SwiftUI.Binding<Double>, _ range: ClosedRange<Double>, _ fmt: String,
-                        percent: Bool = false) -> some View {
-        HStack(alignment: .center) {
-            Text(title)
-            Slider(value: value, in: range).sliderTicks(value.wrappedValue, in: range)
-            Text(String(format: fmt, percent ? value.wrappedValue * 100 : value.wrappedValue)).monospacedDigit().foregroundStyle(.secondary).frame(width: 56, alignment: .trailing)
+    /// A slider row laid out like Settings ▸ Appearance's.
+    private func row(_ title: String, _ detail: String?, _ symbol: String, _ color: Color, _ value: SwiftUI.Binding<Double>,
+                     _ range: ClosedRange<Double>, _ label: String) -> some View {
+        SettingRow(title: title, detail: detail, symbol: symbol, color: color) {
+            HStack(spacing: 10) {
+                Slider(value: value, in: range).sliderTicks(value.wrappedValue, in: range).frame(width: 210)
+                Text(label).monospacedDigit().foregroundStyle(.secondary).frame(width: 56, alignment: .trailing)
+            }
         }
     }
 
@@ -140,6 +154,13 @@ private struct BubbleBox<S: InsettableShape>: ViewModifier {
     func body(content: Content) -> some View {
         let look = st.current, color = Color(nsColor: look.color.ns)
         let boxed = Group {
+            if let tint = st.glassTint {
+                let wash = LinearGradient(colors: st.washColors.map { Color(nsColor: $0) }, startPoint: .topLeading, endPoint: .bottomTrailing)
+                if #available(macOS 26, *) {
+                    content.background(wash.opacity(st.tintStrength * 0.7), in: shape)
+                        .glassEffect(Glass.regular.tint(Color(nsColor: tint)), in: shape)
+                } else { content.background(wash.opacity(st.tintStrength), in: shape).background(.regularMaterial, in: shape) }
+            } else {
             switch st.box {
             case .solid:
                 content.background(color.opacity(look.opacity), in: shape)
@@ -162,13 +183,14 @@ private struct BubbleBox<S: InsettableShape>: ViewModifier {
                     .background {
                         GeometryReader { g in
                             if look.material.isTunable {
-                                BackdropBlur(params: look.backdropParams(corner: min(st.cornerRadius, g.size.height / 2)))
+                                BackdropBlur(params: look.backdropParams(corner: min(st.corner, g.size.height / 2)))
                             } else {
-                                BehindWindowBlur(material: look.material.appKitMaterial ?? .hudWindow, radius: min(st.cornerRadius, g.size.height / 2))
+                                BehindWindowBlur(material: look.material.appKitMaterial ?? .hudWindow, radius: min(st.corner, g.size.height / 2))
                                     .opacity(look.blur)
                             }
                         }
                     }
+            }
             }
         }
         boxed.overlay(shape.strokeBorder(.white.opacity(look.shine * 0.7), lineWidth: look.shine > 0 ? 1 : 0))

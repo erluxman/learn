@@ -310,17 +310,27 @@ struct Keycap: View {
 
 /// A keycap drawn exactly like the "Record a shortcut" icon tile (IconTile's gradient style): a two-tone diagonal gradient
 /// of the key's color, a white label and a soft glow of the same color underneath. Glows a little more under the pointer.
+/// The gradient picked in Settings ▸ General ▸ Key colors replaces the two-tone one.
 private struct KeyTile: View {
     let color: Color
     let size: CGFloat
     let lit: Bool
+    @ObservedObject private var prefs = Prefs.shared
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: size * 1.85 * 0.27, style: .continuous)   // the tile's corner, at the key's height
-        shape.fill(LinearGradient(colors: [IconTile.shift(color, hue: -0.06, brightness: lit ? 0.18 : 0.12),
-                                           IconTile.shift(color, hue: 0.07, brightness: lit ? -0.02 : -0.08)],
-                                  startPoint: .topLeading, endPoint: .bottomTrailing))
-            .shadow(color: color.opacity(lit ? 0.45 : 0.3), radius: size * 1.85 * (lit ? 0.16 : 0.1), y: size * 1.85 * 0.04)
+        let picked = prefs.keyGradient.flatMap(GradientPreset.named)
+        shape.fill(LinearGradient(colors: picked?.colors ?? Self.colors(color, lit: lit), startPoint: .topLeading, endPoint: .bottomTrailing))
+            .overlay(shape.fill(.white.opacity(picked != nil && lit ? 0.14 : 0)))   // lit, as the two-tone brightens
+            .shadow(color: (picked?.colors[1] ?? color).opacity(lit ? 0.45 : 0.3), radius: size * 1.85 * (lit ? 0.16 : 0.1), y: size * 1.85 * 0.04)
     }
+    static func colors(_ color: Color, lit: Bool = false) -> [Color] {
+        [IconTile.shift(color, hue: -0.06, brightness: lit ? 0.18 : 0.12), IconTile.shift(color, hue: 0.07, brightness: lit ? -0.02 : -0.08)]
+    }
+}
+
+extension Keycap {
+    /// The keys' own two-tone gradient, before any pick.
+    static var defaultGradient: [Color] { KeyTile.colors(color) }
 }
 
 /// A keycap under the pointer: swells, lifts a little and leans toward the cursor; springs back when it leaves.
