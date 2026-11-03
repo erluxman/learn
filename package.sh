@@ -14,6 +14,10 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Learn"
 cp Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+# AI Config's semantic model (Core ML, compiled here), its vocabulary and the meanings it matches.
+mkdir -p "$APP/Contents/Resources/AIConfig"
+xcrun coremlcompiler compile Resources/AIConfig/IntentEncoder.mlpackage "$APP/Contents/Resources/AIConfig" >/dev/null
+cp Resources/AIConfig/vocab.txt Resources/AIConfig/intents.json "$APP/Contents/Resources/AIConfig/"
 
 SIGN_ID="${SIGN_ID:-$(security find-identity -v -p codesigning | awk -F'"' 'NR==1{print $2}')}"
 codesign --force --timestamp=none --sign "${SIGN_ID:--}" --identifier com.erluxman.learn "$APP"

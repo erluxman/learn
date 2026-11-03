@@ -24,6 +24,7 @@ final class SearchModel: ObservableObject {
                                         url: Bundle.main.bundleURL)
     static let settingsGroup = SettingsWindow.title
     private static let settingsIndex: [(String, SettingsWindow.Tab)] = [
+        ("AI Config: change settings by typing or talking", .ai), ("AI models and layers", .ai), ("Voice settings chat", .ai),
         ("General", .permissions), ("Permissions", .permissions), ("Cleaner: clean up, protect, speed up your Mac", .permissions), ("Accessibility permission", .permissions), ("Send keystrokes & clicks permission", .permissions),
         ("Input Monitoring permission", .permissions), ("Launch at login", .permissions),
         ("Appearance", .appearance), ("Surface: colorful gradient or liquid glass", .appearance),
@@ -91,6 +92,7 @@ final class SearchModel: ObservableObject {
     @Published private(set) var recorded: (code: Int, mods: Mods)?
 
     var onClose: (_ restoreFocus: Bool) -> Void = { _ in }
+    var onAdjust: (ScreenElement) -> Void = { _ in }   // ↵ on a slider / stepper: adjust mode
     var openSettings: () -> Void = {}
     private var allApps: [AppEntry] = AppCatalog.load()
     private var preferred: String?   // app that was frontmost before the panel opened
@@ -226,9 +228,11 @@ final class SearchModel: ObservableObject {
             let (top, def) = answers()
             let named = apps.compactMap { a in Fuzzy.rank(query, title: a.name).map { (a, $0) } }
             // Like Spotlight: nothing typed, nothing listed — the panel is just the search field.
-            // "settings", "prefs", "learn set…": Learn's own settings come first, ahead of System Settings and the rest.
-            let own = !query.isEmpty && [SettingsWindow.title, "Settings", "Preferences", "Learn Preferences"]
-                .contains { Fuzzy.rank(query, title: $0) ?? 0 >= 6_000 }
+            // "settings", "prefs", "configure", "setup", "learn set…": Learn's own settings (its home, AI Config) come first,
+            // ahead of System Settings and the rest.
+            let own = !query.isEmpty && [SettingsWindow.title, "Settings", "Setting", "Preferences", "Learn Preferences", "Configure",
+                                         "Configure Learn", "Config", "AI Config", "Setup", "Set up", "Customize", "Customise", "Personalize", "Prefs"]
+                .contains { (Fuzzy.rank(query, title: $0) ?? 0) >= (query.count >= 5 ? 1_900 : 6_000) }   // 5+ letters: typos too ("settng")
             let mine: [(Hit, Int)] = own ? [(Hit.app(Self.settingsEntry), Int.max)] : []
             // 2nd: apps named like the query and system shortcuts; 3rd: every app's shortcuts and bookmarks, held
             // below the top rows; then looser app matches and a definition; history, recent files and windows low.
@@ -411,6 +415,29 @@ final class SearchModel: ObservableObject {
     /// Otherwise right-click (`contextMenu`).
     func onScreenChord() { if !enterScreenOnly() { contextMenu() } }
 
+    /// The highlighted row is an on-screen item (what `contextMenu` right-clicks).
+    var onScreenSelected: Bool {
+        guard currentApp != nil, currentApp != Self.settingsEntry, let s = selectedShortcut else { return false }
+        return screen.elements[s.id] != nil
+    }
+
+    /// ← / →: from the highlighted on-screen item to the nearest one on that side. Filtered out by the search?
+    /// The list becomes everything on screen, so every item stays reachable.
+    func moveOnScreen(_ dir: CGFloat) {
+        guard onScreenSelected, let from = selectedShortcut.flatMap({ screen.elements[$0.id] }),
+              let to = Self.nearest(from.frame, dir, in: screen.elements.mapValues(\.frame)) else { return }
+        if !results.contains(where: { $0.id == to }) { query = ""; screenOnly = true; recompute() }
+        if let i = results.firstIndex(where: { $0.id == to }) { selection = i }
+    }
+
+    /// ponytail: centre-to-centre, sideways distance + 2× vertical drift; a beam search if it picks oddly.
+    static func nearest(_ from: CGRect, _ dir: CGFloat, in frames: [String: CGRect]) -> String? {
+        frames.compactMap { id, f -> (String, CGFloat)? in
+            let dx = (f.midX - from.midX) * dir
+            return dx > 1 ? (id, dx + 2 * abs(f.midY - from.midY)) : nil
+        }.min { $0.1 < $1.1 }?.0
+    }
+
     /// ⇥ + Space: right-clicks the highlighted on-screen item. With none highlighted (no app selected, or a menu
     /// command / app row), right-clicks wherever the mouse is, like ⌃ + ⌃.
     func contextMenu() {
@@ -445,7 +472,9 @@ final class SearchModel: ObservableObject {
 
     private func apply(_ els: [ScreenElement], appID: String) {
         var byID: [String: ScreenElement] = [:], rows: [Shortcut] = []
-        for e in els where !e.text.isEmpty {   // unlabeled icons: reachable via label mode only
+        // Nameless icons (⋯, ⚙︎) after the named items, numbered so each is its own row; the highlight shows which is which.
+        let unlabeled = els.filter(\.text.isEmpty).enumerated().map { i, e in var e = e; e.text = "Unlabeled \(i + 1)"; return e }
+        for e in els.filter({ !$0.text.isEmpty }) + unlabeled {
             let s = e.shortcut
             if byID[s.id] == nil { byID[s.id] = e; rows.append(s) }
         }
@@ -501,7 +530,7 @@ final class SearchModel: ObservableObject {
                 let run = {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
                         if s.path.first == LearnActions.group { LearnActions.run(s.path) }
-                        else if let el { ElementScanner.perform(el) }
+                        else if let el { AdjustMode.adjustable(el) ? self.onAdjust(el) : ElementScanner.perform(el) }
                         else if let pid { DispatchQueue.global().async { _ = ElementScanner.pressMatching(path: s.path, pid: pid) } }
                     }
                 }
@@ -518,9 +547,9 @@ final class SearchModel: ObservableObject {
                 UsageStore.shared.record(app: app.id, path: s.path)
                 onClose(false)
                 Executor.run(s, in: app)
-            case .app(let a) where a == Self.settingsEntry:   // Learn's own settings
+            case .app(let a) where a == Self.settingsEntry:   // Learn's own settings, on its home: the AI Config chat
                 onClose(false)
-                SettingsWindow.shared.show()
+                SettingsWindow.shared.show(.ai)
             case .app(let a):   // ↩ opens the app (⇥ shows its shortcuts instead: see drillIn)
                 onClose(false)
                 NSWorkspace.shared.openApplication(at: a.url, configuration: NSWorkspace.OpenConfiguration())

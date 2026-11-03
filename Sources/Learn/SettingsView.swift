@@ -8,10 +8,11 @@ final class SettingsWindow {
     var isFront: Bool { window?.isKeyWindow == true && NSApp.isActive }
 
     enum Tab: String, Hashable, CaseIterable, Identifiable {
-        case permissions, appearance, hotkeys, display, search, advanced, shortcuts
+        case ai, permissions, appearance, hotkeys, display, search, advanced, shortcuts
         var id: Self { self }
         var title: String {
             switch self {
+            case .ai: "AI Config"
             case .permissions: "General"
             case .appearance: "Appearance"
             case .hotkeys: "Hotkeys"
@@ -24,6 +25,7 @@ final class SettingsWindow {
         var gradientKey: String { "settings.\(rawValue)" }   // Prefs.pageGradients
         var subtitle: String {
             switch self {
+            case .ai: "Tell Learn what to change, by typing or talking. Everything runs on this Mac."
             case .permissions: "Permissions, launch at login, the Cleaner and sounds."
             case .appearance: "The glass Learn is made of — how clear, frosted, colored and lively it is."
             case .hotkeys: "Learn's keys: global ones that work in every app, and the ones inside Learn's panel."
@@ -35,6 +37,7 @@ final class SettingsWindow {
         }
         var symbol: String {
             switch self {
+            case .ai: "bubble.left.and.text.bubble.right.fill"
             case .permissions: "gearshape.fill"
             case .appearance: "paintbrush.pointed.fill"
             case .hotkeys: "command"
@@ -46,6 +49,7 @@ final class SettingsWindow {
         }
         var color: Color {
             switch self {
+            case .ai: .indigo
             case .permissions: .blue
             case .appearance: .cyan
             case .hotkeys: .purple
@@ -80,7 +84,7 @@ final class SettingsWindow {
     }
 }
 
-final class TabSelection: ObservableObject { @Published var tab: SettingsWindow.Tab = .permissions }
+final class TabSelection: ObservableObject { @Published var tab: SettingsWindow.Tab = .ai }   // AI Config is Settings' home
 
 /// The window's glass: one rounded shape (no system rim), traffic lights, shadow, and the jelly wobble on drag.
 private struct SettingsRoot: View {
@@ -146,6 +150,7 @@ struct SettingsView: View {
                 .padding(.vertical, 8).padding(.leading, 8)
             Group {
                 switch selection.tab {
+                case .ai: AIConfigPane()
                 case .permissions: PermissionsPane()
                 case .appearance: AppearancePane()
                 case .hotkeys: HotkeysPane()
@@ -268,9 +273,10 @@ private struct SidebarRow: View {
 
 // MARK: Building blocks
 
-/// Page for one sidebar item: hero (tile, title, blurb) above a grouped form.
-private struct Pane<Content: View>: View {
+/// Page for one sidebar item: hero (tile, title, blurb) above a grouped form, or (`form: false`) above the content as is.
+struct Pane<Content: View>: View {
     let tab: SettingsWindow.Tab
+    var form = true
     @ViewBuilder let content: Content
     @Environment(\.appearance) private var look
     var body: some View {
@@ -295,12 +301,16 @@ private struct Pane<Content: View>: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             // Behind the header: dragging it moves the window, scrolling on it scrolls the form; the icon keeps its hover.
             .background(WindowDragArea(forwardsScroll: true))
-            Form { content }
-                .formStyle(.grouped)
-                .font(.app(14))                                   // rows that don't set their own size
-                .contentMargins(.horizontal, 14, for: .scrollContent)   // the grouped boxes sit in from the page edges
-                .scrollContentBackground(.hidden)
-                .contentMargins(.bottom, 20, for: .scrollIndicators)   // keep the scroller clear of the rounded corner
+            if form {
+                Form { content }
+                    .formStyle(.grouped)
+                    .font(.app(14))                                   // rows that don't set their own size
+                    .contentMargins(.horizontal, 14, for: .scrollContent)   // the grouped boxes sit in from the page edges
+                    .scrollContentBackground(.hidden)
+                    .contentMargins(.bottom, 20, for: .scrollIndicators)   // keep the scroller clear of the rounded corner
+            } else {
+                content.font(.app(14)).frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
         }
         .background(alignment: .top) {   // on glass, the section's color washes in from the top, like light through tinted glass
             if look.surface == .glass {
@@ -604,6 +614,7 @@ private struct HotkeysPane: View {
         case LearnActions.nextScreen: ("rectangle.2.swap", .teal)
         case LearnActions.mouse: ("computermouse.fill", .red)
         case LearnActions.settings: ("gearshape.fill", .gray)
+        case LearnActions.configure: ("bubble.left.and.text.bubble.right.fill", .indigo)
         default: ("sparkles", .purple)
         }
     }
@@ -679,6 +690,7 @@ private struct PanelSections: View {
                 ForEach([("↩", "Run the selected item / open the selected app"), ("⇥", "Next item (on an app: show its shortcuts instead of opening it)"), ("⇧⇥", "Previous item"),
                          ("⇥ + Space", "Nothing typed in an app: search only what's on screen"),
                          ("⇥ + Space ", "Right-click the highlighted on-screen item, or where the mouse is"), ("⇧⇥ ", "Nothing typed in an app: frequently used ↔ suggested"),
+                         ("Space Space Space", "Right-click the highlighted on-screen item"),
                          ("↑", "Move the selection up"), ("↓", "Move the selection down"),
                          ("⎋", "Close Learn"), ("⌫", "Empty search: back to the app list"), ("⌘R", "Full rescan of this app (it also refreshes quietly each time you open it)"),
                          ("⌘,", "Open these settings"), ("⌘W", "Close Learn")], id: \.1) { key, what in
@@ -834,7 +846,7 @@ private struct ShortcutsPane: View {
         groups = Bindings.shared.scopes.compactMap { scope in
             let items = Bindings.shared.all(scope)
             guard !items.isEmpty else { return nil }
-            let name = scope == Bindings.global ? "Everywhere (Learn commands)"
+            let name = scope == Bindings.global ? "Everywhere (Learn commands, apps and links)"
                 : NSWorkspace.shared.urlForApplication(withBundleIdentifier: scope)
                     .map { FileManager.default.displayName(atPath: $0.path).replacingOccurrences(of: ".app", with: "") } ?? scope
             return (scope, name, items)

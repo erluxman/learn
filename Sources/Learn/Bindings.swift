@@ -16,11 +16,12 @@ enum LearnActions {
     static let group = "Learn"
     static let labels = [group, "Label clickable items on screen"]
     static let settings = [group, "Open Learn Settings"]
+    static let configure = [group, "Configure Learn (AI Config)"]
     static let rightClick = [group, "Right-click the focused item"]
     static let pointer = [group, "Control the pointer with the keyboard"]
     static let nextScreen = [group, "Move window to next screen"]
     static let mouse = [group, "Turn mouse & trackpad on or off"]
-    static let all: [[String]] = [labels, rightClick, pointer, nextScreen, mouse, settings]
+    static let all: [[String]] = [labels, rightClick, pointer, nextScreen, mouse, configure, settings]
     /// Built-in combos until the user rebinds them (⌘↩ on the item; ⌫ there restores these).
     static let defaults: [Binding] = [
         Binding(path: labels, keyCode: 49, mods: [.cmd, .shift]),   // ⌘⇧Space
@@ -65,8 +66,22 @@ final class Bindings {
         var list = all(app).filter { $0.path != b.path && !($0.keyCode == b.keyCode && $0.mods == b.mods) }
         list.append(b)
         byApp[app] = list
+        madeAt[Self.key(app, b.path)] = Date().timeIntervalSince1970
+        UserDefaults.standard.set(madeAt, forKey: "bindingTimes")
         save(app)
     }
+
+    /// Puts an app's list back as it was (AI Config's undo).
+    func restore(_ app: String, _ list: [Binding]) {
+        byApp[app] = list.isEmpty ? nil : list
+        save(app)
+    }
+
+    /// When each binding was made (seconds since 1970), so "remove the shortcut I just made" finds the newest.
+    /// Bindings from before this was kept have no time.
+    private var madeAt = UserDefaults.standard.dictionary(forKey: "bindingTimes") as? [String: Double] ?? [:]
+    func made(_ app: String, _ path: [String]) -> Date? { madeAt[Self.key(app, path)].map(Date.init(timeIntervalSince1970:)) }
+    private static func key(_ app: String, _ path: [String]) -> String { ([app] + path).joined(separator: "\u{1F}") }
 
     func remove(_ app: String, path: [String]) {
         byApp[app] = all(app).filter { $0.path != path }
@@ -95,6 +110,8 @@ final class KeyTap {
     /// While the panel is open without the keyboard (over Ghostty's quick terminal): every key press / release goes here
     /// first; true = it was for the panel (swallowed).
     var panelKeys: ((CGEvent, CGEventType) -> Bool)?
+    /// ⌘↑ / ⌘↓ (code, mods, press / release) for the wheel scroller, ahead of every mode; true = swallowed.
+    var wheel: ((Int, Mods, Bool) -> Bool)?
     /// True while Learn's recorder is open: keys must reach the recorder untouched.
     var suspended: () -> Bool = { false }
     private let queue = DispatchQueue(label: "learn.press", qos: .userInteractive)
@@ -113,8 +130,12 @@ final class KeyTap {
         return true
     }
 
+    /// `eventSourceUserData` on keys Learn posts itself (adjust mode's arrow keys): never handled here.
+    static let ownKey: Int64 = 0x4C45_4152
+
     private func handle(_ type: CGEventType, _ e: CGEvent) -> Unmanaged<CGEvent>? {
         let pass = Unmanaged.passUnretained(e)
+        if e.getIntegerValueField(.eventSourceUserData) == Self.ownKey { return pass }
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
             if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
             return pass
@@ -130,6 +151,7 @@ final class KeyTap {
         }
         if type == .keyDown || type == .keyUp, let panelKeys, panelKeys(e, type) { return nil }
         if type == .keyUp {
+            if let wheel, wheel(Int(e.getIntegerValueField(.keyboardEventKeycode)), [], false) { return nil }
             releaser?(Int(e.getIntegerValueField(.keyboardEventKeycode)))
             return pass
         }
@@ -145,6 +167,7 @@ final class KeyTap {
         let isRepeat = e.getIntegerValueField(.keyboardEventAutorepeat) != 0
         if !isRepeat { observer(code, mods) }
         guard !suspended() else { return pass }
+        if let wheel, wheel(code, mods, true) { return nil }
         if let interceptor { return interceptor(code, mods, isRepeat) ? nil : pass }
         guard let app = NSWorkspace.shared.frontmostApplication, let id = app.bundleIdentifier else { return pass }
         let mine = id == Bundle.main.bundleIdentifier   // Learn's panel: only global commands apply
@@ -154,6 +177,7 @@ final class KeyTap {
             let pid = app.processIdentifier
             switch b.path.first {
             case LearnActions.group: DispatchQueue.main.async { LearnActions.run(b.path) }
+            case OpenTarget.group where b.path.count == 2: DispatchQueue.main.async { OpenTarget.open(b.path[1]) }
             case ElementScanner.marker:
                 queue.async { if !ElementScanner.pressMatching(path: b.path, pid: pid) { DispatchQueue.main.async { NSSound.beep() } } }
             default:

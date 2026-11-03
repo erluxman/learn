@@ -9,6 +9,7 @@ let package = Package(
             name: "Learn",
             path: "Sources/Learn",
             linkerSettings: [.linkedFramework("Carbon")]
-        )
+        ),
+        .testTarget(name: "LearnTests", dependencies: ["Learn"])
     ]
 )

@@ -1,0 +1,749 @@
+{
+ "about": "AI Config's meanings. Each intent is one thing a person can mean; its examples are sentences that mean it. The semantic model compares what the user says with every example; nothing here is matched by keywords. Values (numbers, colors, keys, app names) are read from the sentence separately. Add examples to teach it; learned-intents.json in Application Support holds what users taught it.",
+ "intents": [
+  {
+   "id": "volume.down",
+   "setting": "volume",
+   "op": "less",
+   "chip": "Quieter sounds",
+   "reply": "Turned the sound down.",
+   "examples": [
+    "turn the sound down",
+    "it's too loud",
+    "the clicks are too noisy",
+    "lower the volume",
+    "make it quieter",
+    "the sounds are way too loud",
+    "the volume hurts",
+    "the clicking is too harsh",
+    "can it be a little quieter",
+    "softer sounds please",
+    "the beeps are deafening",
+    "reduce the noise",
+    "that click is really loud"
+   ]
+  },
+  {
+   "id": "volume.up",
+   "setting": "volume",
+   "op": "more",
+   "chip": "Louder sounds",
+   "reply": "Turned the sound up.",
+   "examples": [
+    "turn the sound up",
+    "i can barely hear it",
+    "it's too quiet",
+    "make the clicks louder",
+    "raise the volume",
+    "the sounds are too soft",
+    "i can't hear the clicks",
+    "the volume is too low",
+    "boost the sound",
+    "it's hard to hear",
+    "more volume",
+    "crank it up"
+   ]
+  },
+  {
+   "id": "volume.off",
+   "setting": "volume",
+   "op": "off",
+   "chip": "Mute sounds",
+   "reply": "Sounds are off now. Learn will be silent.",
+   "examples": [
+    "mute the sounds",
+    "i don't want any sounds",
+    "turn off the clicking noise",
+    "silence please",
+    "no more beeps",
+    "sounds are unnecessary",
+    "i hate the noises",
+    "make it completely silent",
+    "disable all sounds",
+    "the sounds are pointless",
+    "stop making noise",
+    "i work in a library, no sound"
+   ]
+  },
+  {
+   "id": "volume.on",
+   "setting": "volume",
+   "op": "on",
+   "chip": "Turn sounds back on",
+   "reply": "Sounds are back on.",
+   "examples": [
+    "turn the sounds back on",
+    "unmute",
+    "i miss the click sound",
+    "bring back the sounds",
+    "i want the clicks again",
+    "enable sounds"
+   ]
+  },
+  {
+   "id": "wobble.off",
+   "setting": "wobble",
+   "op": "off",
+   "chip": "No wobble",
+   "reply": "Windows won't wobble anymore.",
+   "examples": [
+    "stop the windows wobbling",
+    "no jelly effect",
+    "turn off the wobble",
+    "windows shouldn't bounce when i drag them",
+    "i don't like the jiggle",
+    "the wobbling is unnecessary",
+    "disable the bounce animation",
+    "windows keep jiggling, stop it",
+    "no animation when dragging",
+    "the jelly effect is annoying",
+    "the wobble makes me dizzy",
+    "keep windows still when i move them"
+   ]
+  },
+  {
+   "id": "wobble.less",
+   "setting": "wobble",
+   "op": "less",
+   "chip": "Less wobble",
+   "reply": "Toned the wobble down.",
+   "examples": [
+    "less wobble",
+    "the wobble is a bit much",
+    "tone down the jelly effect",
+    "make dragging steadier",
+    "the bounce is slightly too strong",
+    "a little less jiggle",
+    "reduce the wobble a bit",
+    "the jelly is too intense",
+    "calm the animation down a little"
+   ]
+  },
+  {
+   "id": "wobble.more",
+   "setting": "wobble",
+   "op": "more",
+   "chip": "More wobble",
+   "reply": "Windows are wobblier now.",
+   "examples": [
+    "more wobble",
+    "make it bouncier",
+    "i want more jelly",
+    "the wobble is too subtle",
+    "increase the jiggle",
+    "make the windows more playful when i drag them",
+    "turn the wobble back on"
+   ]
+  },
+  {
+   "id": "corners.more",
+   "setting": "cornerRadius",
+   "op": "more",
+   "chip": "Rounder corners",
+   "reply": "Rounded the corners more.",
+   "examples": [
+    "rounder corners",
+    "make the corners softer",
+    "the windows look too boxy",
+    "more rounded edges",
+    "the corners are too sharp",
+    "the edges are too pointy",
+    "i want curvier windows",
+    "the corners look harsh",
+    "soften the edges",
+    "make it look friendlier and round"
+   ]
+  },
+  {
+   "id": "corners.less",
+   "setting": "cornerRadius",
+   "op": "less",
+   "chip": "Sharper corners",
+   "reply": "Made the corners sharper.",
+   "examples": [
+    "sharper corners",
+    "square corners please",
+    "the corners are too round",
+    "less rounded edges",
+    "i want straight corners",
+    "the windows are too bubbly",
+    "the rounding is excessive",
+    "make it more boxy",
+    "flatter crisp edges",
+    "i like square windows"
+   ]
+  },
+  {
+   "id": "surface.glass",
+   "setting": "surface",
+   "op": "choice:glass",
+   "chip": "Liquid glass",
+   "reply": "Switched to liquid glass. The screen shows through now.",
+   "examples": [
+    "make it transparent",
+    "use liquid glass",
+    "i want to see through the window",
+    "glass look please",
+    "make it translucent",
+    "the window is too solid",
+    "let the desktop show through",
+    "the background is too opaque",
+    "switch to the glass style",
+    "frosted glass look"
+   ]
+  },
+  {
+   "id": "surface.colorful",
+   "setting": "surface",
+   "op": "choice:colorful",
+   "chip": "Colorful gradient",
+   "reply": "Switched to the colorful gradient, nothing shows through.",
+   "examples": [
+    "make it opaque",
+    "use the colorful gradient",
+    "it's too see-through",
+    "i can't read it, the background shows through",
+    "the glass is too transparent",
+    "i want a solid colorful window",
+    "no more glass look",
+    "the window should not be see-through",
+    "the glass is hard to read"
+   ]
+  },
+  {
+   "id": "background.change",
+   "setting": "background",
+   "op": "change",
+   "chip": "A different background",
+   "reply": "Here's a different background.",
+   "examples": [
+    "change the background",
+    "i don't like the background",
+    "different background please",
+    "the background is ugly",
+    "try another gradient",
+    "the window colors are boring",
+    "give me a new background",
+    "that gradient is awful",
+    "i'm tired of this color",
+    "the page color is not nice"
+   ]
+  },
+  {
+   "id": "background.color",
+   "setting": "background",
+   "op": "color",
+   "chip": "A blue background",
+   "reply": "Changed the background.",
+   "examples": [
+    "make the background blue",
+    "i want a pink background",
+    "use a green gradient",
+    "orange window background",
+    "can the background be purple",
+    "a teal background would be nice"
+   ]
+  },
+  {
+   "id": "background.away",
+   "setting": "background",
+   "op": "away",
+   "chip": "Not this color",
+   "reply": "Picked a background in a different color.",
+   "examples": [
+    "i don't like the green background",
+    "the purple background is too much",
+    "no more blue background",
+    "i hate this red gradient",
+    "the orange background hurts my eyes",
+    "get rid of the pink color"
+   ]
+  },
+  {
+   "id": "background.reset",
+   "setting": "background",
+   "op": "reset",
+   "chip": "Each page its own color",
+   "reply": "Each page has its own color again.",
+   "examples": [
+    "give each page its own color again",
+    "go back to the original background",
+    "reset the background",
+    "the default page colors were better"
+   ]
+  },
+  {
+   "id": "glassColor.color",
+   "setting": "glassColor",
+   "op": "color",
+   "chip": "Blue glass",
+   "reply": "Changed the glass color.",
+   "examples": [
+    "make the glass purple",
+    "tint it blue",
+    "i want a green tint",
+    "color the glass pink",
+    "orange glass please",
+    "a red tint on the glass"
+   ]
+  },
+  {
+   "id": "glassColor.away",
+   "setting": "glassColor",
+   "op": "away",
+   "chip": "A different glass color",
+   "reply": "Picked a different glass color.",
+   "examples": [
+    "i don't like the purple glass",
+    "the tint color is ugly",
+    "not this glass color",
+    "the green tint is awful",
+    "change the tint to something else"
+   ]
+  },
+  {
+   "id": "glassIntensity.more",
+   "setting": "glassIntensity",
+   "op": "more",
+   "chip": "Stronger tint",
+   "reply": "Made the glass color stronger.",
+   "examples": [
+    "stronger tint",
+    "more color in the glass",
+    "the tint is too faint",
+    "make the glass more colorful",
+    "i can barely see the tint"
+   ]
+  },
+  {
+   "id": "glassIntensity.less",
+   "setting": "glassIntensity",
+   "op": "less",
+   "chip": "Subtler tint",
+   "reply": "Made the glass color subtler.",
+   "examples": [
+    "weaker tint",
+    "less color in the glass",
+    "the tint is too strong",
+    "make the glass clearer",
+    "the glass is too colorful",
+    "tone down the tint"
+   ]
+  },
+  {
+   "id": "keyHUD.off",
+   "setting": "keyHUD",
+   "op": "off",
+   "chip": "Hide the shortcut bubble",
+   "reply": "The shortcut bubble won't show your keys anymore.",
+   "examples": [
+    "hide the key bubble",
+    "stop showing the keys i press",
+    "turn off the shortcut bubble",
+    "the keystroke popup is distracting",
+    "the key overlay is unnecessary",
+    "i don't need to see my keystrokes",
+    "that keys popup is annoying",
+    "disable the keycast",
+    "the bubble at the bottom gets in the way",
+    "stop flashing my shortcuts on screen"
+   ]
+  },
+  {
+   "id": "keyHUD.on",
+   "setting": "keyHUD",
+   "op": "on",
+   "chip": "Show the shortcut bubble",
+   "reply": "The shortcut bubble will show the keys you press.",
+   "examples": [
+    "show the keys i press",
+    "turn on the shortcut bubble",
+    "display my keystrokes on screen",
+    "bring back the key bubble",
+    "i liked seeing my shortcuts",
+    "show keystrokes for my screencast",
+    "i'm recording a demo, show my keys"
+   ]
+  },
+  {
+   "id": "menuCommands.off",
+   "setting": "menuCommands",
+   "op": "off",
+   "chip": "Hide menu commands",
+   "reply": "Search will only show menu items that have a shortcut.",
+   "examples": [
+    "i don't want that menu",
+    "hide menu commands",
+    "stop showing every menu item",
+    "only show items with shortcuts",
+    "too many menu entries in search",
+    "menu commands are useless to me",
+    "the menu items are cluttering the results",
+    "i don't need all those menu options",
+    "remove menus from search",
+    "menus without shortcuts are noise"
+   ]
+  },
+  {
+   "id": "menuCommands.on",
+   "setting": "menuCommands",
+   "op": "on",
+   "chip": "Show all menu commands",
+   "reply": "Search will show every menu command again.",
+   "examples": [
+    "show all menu commands",
+    "i want every menu item in search",
+    "bring back the menu items",
+    "the menu commands were helpful",
+    "include menus in results",
+    "i need the menu options back",
+    "show menu items even without shortcuts"
+   ]
+  },
+  {
+   "id": "searchFiles.off",
+   "setting": "searchFiles",
+   "op": "off",
+   "chip": "No files in search",
+   "reply": "Files won't show up in search anymore.",
+   "examples": [
+    "don't search my files",
+    "hide documents from results",
+    "no files in search",
+    "keep my documents out of it",
+    "files are cluttering search",
+    "i don't need files there",
+    "stop showing my documents",
+    "my private files shouldn't appear",
+    "i never look for files here"
+   ]
+  },
+  {
+   "id": "searchFiles.on",
+   "setting": "searchFiles",
+   "op": "on",
+   "chip": "Search files too",
+   "reply": "Search will include your files.",
+   "examples": [
+    "search my files too",
+    "show documents in results",
+    "include files in search",
+    "i want to find my documents",
+    "let me open files from here",
+    "bring back file results"
+   ]
+  },
+  {
+   "id": "screenItems.off",
+   "setting": "screenItems",
+   "op": "off",
+   "chip": "No on-screen items",
+   "reply": "Search won't list buttons and links on screen anymore.",
+   "examples": [
+    "don't show buttons from the page",
+    "hide on-screen items",
+    "i don't want links from the window in search",
+    "stop listing things on my screen",
+    "the on-screen results are distracting"
+   ]
+  },
+  {
+   "id": "screenItems.on",
+   "setting": "screenItems",
+   "op": "on",
+   "chip": "Show on-screen items",
+   "reply": "Search will list buttons and links on screen again.",
+   "examples": [
+    "show buttons and links from the screen",
+    "include on-screen items",
+    "i want to click things on the page by typing",
+    "bring back the on-screen results"
+   ]
+  },
+  {
+   "id": "quickAnswers.off",
+   "setting": "quickAnswers",
+   "op": "off",
+   "chip": "No quick answers",
+   "reply": "No more calculator, conversions or definitions in search.",
+   "examples": [
+    "no calculator",
+    "turn off quick answers",
+    "i don't need math in search",
+    "stop showing definitions",
+    "the conversions are in the way",
+    "i have my own calculator app"
+   ]
+  },
+  {
+   "id": "quickAnswers.on",
+   "setting": "quickAnswers",
+   "op": "on",
+   "chip": "Quick answers on",
+   "reply": "Calculator, conversions and definitions are back in search.",
+   "examples": [
+    "turn on the calculator",
+    "i want quick answers",
+    "let me do math in search",
+    "show unit conversions",
+    "bring back definitions"
+   ]
+  },
+  {
+   "id": "chordRightClick.off",
+   "setting": "chordRightClick",
+   "op": "off",
+   "chip": "No ⌃+⌃ right-click",
+   "reply": "Pressing both Control keys won't right-click anymore.",
+   "examples": [
+    "stop right clicking when i press both control keys",
+    "the control key right click keeps triggering by accident",
+    "disable the double control trick",
+    "i don't want the control chord"
+   ]
+  },
+  {
+   "id": "chordRightClick.on",
+   "setting": "chordRightClick",
+   "op": "on",
+   "chip": "⌃+⌃ right-clicks",
+   "reply": "Pressing both Control keys right-clicks again.",
+   "examples": [
+    "let me right click with both control keys",
+    "turn on the control chord",
+    "i want the keyboard right click back"
+   ]
+  },
+  {
+   "id": "mouse.off",
+   "setting": "mouse",
+   "op": "off",
+   "chip": "Mouse & trackpad off",
+   "reply": "Mouse and trackpad are off, so you'll practice with the keyboard.",
+   "examples": [
+    "turn off my mouse",
+    "disable the trackpad",
+    "i want to practice without the mouse",
+    "force me to use the keyboard",
+    "block the pointer"
+   ]
+  },
+  {
+   "id": "mouse.on",
+   "setting": "mouse",
+   "op": "on",
+   "chip": "Mouse & trackpad on",
+   "reply": "Mouse and trackpad work again.",
+   "examples": [
+    "turn my mouse back on",
+    "enable the trackpad",
+    "i need my mouse",
+    "give me the pointer back",
+    "unblock the mouse"
+   ]
+  },
+  {
+   "id": "rescan.often",
+   "setting": "rescan",
+   "op": "less",
+   "chip": "Rescan more often",
+   "reply": "Learn will re-read app menus more often.",
+   "examples": [
+    "rescan more often",
+    "the shortcuts are out of date",
+    "refresh menus more frequently",
+    "keep the shortcut list fresher"
+   ]
+  },
+  {
+   "id": "rescan.rarely",
+   "setting": "rescan",
+   "op": "more",
+   "chip": "Rescan less often",
+   "reply": "Learn will re-read app menus less often.",
+   "examples": [
+    "rescan less often",
+    "stop rescanning so much",
+    "scanning slows things down",
+    "refresh the menus less frequently"
+   ]
+  },
+  {
+   "id": "keyGradient.change",
+   "setting": "keyGradient",
+   "op": "change",
+   "chip": "New key colors",
+   "reply": "The shortcut keys have new colors.",
+   "examples": [
+    "change the key colors",
+    "i don't like the pink keycaps",
+    "different colors for the shortcut keys",
+    "the keycap gradient is ugly",
+    "make the keys another color"
+   ]
+  },
+  {
+   "id": "debugLog.on",
+   "setting": "debugLog",
+   "op": "on",
+   "chip": "Debug log on",
+   "reply": "Debug log is on.",
+   "examples": [
+    "turn on debug logging",
+    "i want to report a bug, enable logs",
+    "record diagnostics"
+   ]
+  },
+  {
+   "id": "debugLog.off",
+   "setting": "debugLog",
+   "op": "off",
+   "chip": "Debug log off",
+   "reply": "Debug log is off.",
+   "examples": [
+    "turn off debug logging",
+    "stop writing logs",
+    "disable diagnostics"
+   ]
+  },
+  {
+   "id": "shortcut.create",
+   "command": "shortcut.create",
+   "chip": "Make a shortcut",
+   "reply": "",
+   "examples": [
+    "when i press command shift k open safari",
+    "make a shortcut for safari",
+    "i want a hotkey that opens my browser",
+    "bind control option s to terminal",
+    "set up a key combo for reopening closed tabs",
+    "create a keyboard shortcut",
+    "assign a shortcut to label the screen",
+    "pressing f5 should open mail",
+    "give me a hotkey for this"
+   ]
+  },
+  {
+   "id": "shortcut.remove",
+   "command": "shortcut.remove",
+   "chip": "Remove a shortcut",
+   "reply": "",
+   "examples": [
+    "remove that shortcut",
+    "i accidentally created a shortcut",
+    "delete the hotkey i just made",
+    "that shortcut was a mistake",
+    "get rid of my safari shortcut",
+    "i don't need that key combo anymore",
+    "unbind command shift k",
+    "that hotkey is wrong, take it away",
+    "the shortcut i made keeps getting in the way"
+   ]
+  },
+  {
+   "id": "shortcut.list",
+   "command": "shortcut.list",
+   "chip": "My shortcuts",
+   "reply": "",
+   "examples": [
+    "what shortcuts do i have",
+    "show my shortcuts",
+    "list the hotkeys i made",
+    "which key combos did i set up",
+    "remind me of my shortcuts"
+   ]
+  },
+  {
+   "id": "undo",
+   "command": "undo",
+   "chip": "Undo",
+   "reply": "",
+   "examples": [
+    "undo",
+    "undo that",
+    "put it back",
+    "revert the last change",
+    "go back to how it was",
+    "that was a mistake, change it back",
+    "never mind, restore it",
+    "i liked it better before"
+   ]
+  },
+  {
+   "id": "resetAll",
+   "command": "resetAll",
+   "chip": "Reset everything",
+   "reply": "",
+   "examples": [
+    "reset everything",
+    "restore all settings to default",
+    "start over with the original settings",
+    "factory reset",
+    "undo all my customizations"
+   ]
+  },
+  {
+   "id": "help",
+   "command": "help",
+   "chip": "What can you do?",
+   "reply": "",
+   "examples": [
+    "help",
+    "what can you do",
+    "what can i change",
+    "how does this work",
+    "what settings are there",
+    "give me some examples"
+   ]
+  },
+  {
+   "id": "hello",
+   "command": "hello",
+   "chip": "Hi",
+   "reply": "Hi! Tell me what you'd like Learn to look or act like.",
+   "examples": [
+    "hi",
+    "hello",
+    "hey there",
+    "good morning",
+    "thanks",
+    "thank you",
+    "you're great"
+   ]
+  },
+  {
+   "id": "keep",
+   "command": "keep",
+   "chip": "Leave it as is",
+   "reply": "",
+   "examples": [
+    "the sound is fine",
+    "the corners are okay as they are",
+    "leave the wobble alone",
+    "the colors are good",
+    "i like the glass",
+    "that's perfect",
+    "no change needed there",
+    "it's fine the way it is",
+    "i am happy with how it looks"
+   ]
+  },
+  {
+   "id": "none",
+   "command": "none",
+   "chip": "",
+   "reply": "",
+   "examples": [
+    "what's the weather",
+    "tell me a joke",
+    "i like cats",
+    "who won the game",
+    "write me a poem",
+    "what time is it",
+    "order a pizza",
+    "how old are you",
+    "what's the capital of france"
+   ]
+  }
+ ]
+}

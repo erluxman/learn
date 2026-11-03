@@ -10,6 +10,9 @@ enum Synonyms {
         "minimize": "hide dock", "zoom": "maximize fill", "fullscreen": "maximize", "full": "maximize",
         "tile": "split snap side", "arrange": "tile split snap", "mirror": "duplicate",
         "sidecar": "ipad tablet", "airplay": "ipad cast", "screenshot": "capture grab snap",
+        "configure": "setup set up setting settings config customize customise personalize preferences prefs",
+        "more": "three dots ellipsis kebab options", "options": "more three dots ellipsis",
+        "unlabeled": "icon three dots ellipsis more options",
     ]
 
     /// Lowercased display name → what people call it. Refreshed each time the panel opens.

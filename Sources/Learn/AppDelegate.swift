@@ -16,6 +16,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let hints = HintMode()
     private let menuSearch = MenuSearch()
     private let pointer = PointerMode()
+    private let adjust = AdjustMode()
+    private let wheel = WheelScroll()
     private var bag = Set<AnyCancellable>()
     private var lastApp: NSRunningApplication?   // last app the user focused (not Learn)
 
@@ -74,7 +76,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in self?.syncCustomKeys() }
         // Opening the app → Settings; the hotkey → search. Silent when started at login.
-        if !launchedAtLogin { SettingsWindow.shared.show(AXIsProcessTrusted() ? .hotkeys : .permissions) }
+        if !launchedAtLogin { SettingsWindow.shared.show(AXIsProcessTrusted() ? .ai : .permissions) }
         if CommandLine.arguments.contains("--cleaner") { CleanerWindow.shared.show() }   // straight into the Cleaner
     }
 
@@ -135,7 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func toggle() { panel.isVisible ? panel.dismiss() : show() }
 
     private func show() {
-        pointer.stop()   // the panel needs plain keys
+        pointer.stop(); adjust.stop()   // the panel needs plain keys
         // A ⇥ + Space right-click closes the panel with both keys still down; their key-ups went to the other app.
         tabDown = false; tabPending = false; spaceDown = false
         if SettingsWindow.shared.isFront {   // searching Learn's own settings; Settings stays open underneath
@@ -178,6 +180,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// `focused`: the panel has the keyboard, so editing keys go to its text field.
     private func panelKey(_ e: NSEvent, focused: Bool = true) -> NSEvent? {
         if e.type == .keyUp { return chordKeyUp(e) }
+        if Int(e.keyCode) != kVK_Space { spaces = 0 }   // "a b c" typed fast isn't Space Space Space
         if model.recording != nil { handleRecorderKey(e); return nil }
         let cmd = e.modifierFlags.contains(.command)
         let code = Int(e.keyCode), mods = Recorder.mods(e.modifierFlags)
@@ -190,6 +193,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch code {
         case kVK_DownArrow: model.move(1)
         case kVK_UpArrow: model.move(-1)
+        case kVK_LeftArrow where mods.isEmpty && model.onScreenSelected: model.moveOnScreen(-1)   // else: the caret
+        case kVK_RightArrow where mods.isEmpty && model.onScreenSelected: model.moveOnScreen(1)
         case kVK_Return where cmd && model.selectedShortcut == nil: model.activate(alt: true)
         case kVK_Return, kVK_ANSI_KeypadEnter: model.activate()
         case kVK_Tab where mods == [.shift]: model.move(-1)
@@ -248,10 +253,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 return .some(nil)
             }
             spaceDown = true
-            return .some(e)   // types a space
+            return tripleSpace(e) ? .some(nil) : .some(e)   // types a space
         default:
             return nil
         }
+    }
+
+    /// Space Space Space on a highlighted on-screen item right-clicks it. The first two typed spaces reset the
+    /// selection to the top row, so the search and highlight from before them come back first.
+    private var spaces = 0, lastSpace: TimeInterval = 0, beforeSpaces: (query: String, selection: Int)?
+
+    private func tripleSpace(_ e: NSEvent) -> Bool {
+        guard !e.isARepeat else { spaces = 0; return false }
+        spaces = e.timestamp - lastSpace < 0.4 ? spaces + 1 : 1
+        lastSpace = e.timestamp
+        if spaces == 1 { beforeSpaces = model.onScreenSelected ? (model.query, model.selection) : nil }
+        guard spaces == 3, let b = beforeSpaces else { return false }
+        spaces = 0
+        model.query = b.query; model.selection = b.selection
+        model.contextMenu()
+        return true
     }
 
     private func chordKeyUp(_ e: NSEvent) -> NSEvent? {
@@ -319,6 +340,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             guard let self else { return }
             self.keyTap.interceptor = on ? { [weak self] code, mods, rep in rep || self?.hints.handle(keyCode: code, mods: mods) ?? false } : nil
         }
+        hints.onPointerMode = { [weak self] in self?.pointer.start() }   // ⌘M + label
+        hints.onAdjust = { [weak self] in self?.adjust.start($0) }
+        hints.onGrab = { [weak self] p in self?.pointer.grab(at: p) }   // Space Space + label
+        keyTap.wheel = { [weak self] code, mods, down in self?.wheel.handle(code: code, mods: mods, down: down) ?? false }
+        wheel.ownsSpace = { Prefs.shared.panelKey.matches(kVK_Space, [.cmd]) }
+        wheel.spaceTapped = { [weak self] in self?.toggle() }
+        model.onAdjust = { [weak self] in self?.adjust.start($0) }
+        adjust.onKeysCaptured = { [weak self] on in
+            guard let self else { return }
+            self.keyTap.interceptor = on ? { [weak self] code, mods, _ in self?.adjust.handle(keyCode: code, mods: mods) ?? false } : nil
+        }
         menuSearch.onKeysCaptured = { [weak self] on in
             guard let self else { return }
             self.keyTap.interceptor = on ? { [weak self] code, mods, rep in rep || self?.menuSearch.handle(keyCode: code, mods: mods) ?? false } : nil
@@ -345,6 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         LearnActions.run = { [weak self] path in
             guard let self else { return }
             if path == LearnActions.settings { self.panel.dismiss(restoreFocus: false); SettingsWindow.shared.show(); return }
+            if path == LearnActions.configure { self.panel.dismiss(restoreFocus: false); SettingsWindow.shared.show(.ai); return }
             if path == LearnActions.rightClick {
                 let wait = self.panel.isVisible ? 0.25 : 0
                 if self.panel.isVisible { self.panel.dismiss() }
@@ -366,12 +399,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 if self.pointer.active { self.pointer.stop(); return }
                 if self.panel.isVisible { self.panel.dismiss() }
                 self.hints.stop()   // one key interceptor at a time
+                self.adjust.stop()
                 self.menuSearch.stop()
                 self.pointer.start()
                 return
             }
             guard path == LearnActions.labels else { return }
-            self.pointer.stop()
+            self.pointer.stop(); self.adjust.stop()
             if self.panel.isVisible {   // panel open: close it, return focus to the app, then label that app
                 self.panel.dismiss()
                 self.model.clearScreen()

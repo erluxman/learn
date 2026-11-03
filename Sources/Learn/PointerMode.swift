@@ -148,11 +148,35 @@ final class PointerMode {
         }
     }
 
-    private func toggleDrag() {
-        guard let p = CGEvent(source: nil)?.location else { return }
+    /// Space Space + label: the button goes down at `p` and pointer mode starts dragging from there.
+    func grab(at p: CGPoint) {
+        start()
+        post(.mouseMoved, at: p)
+        if !dragging { toggleDrag(at: p) }
+    }
+
+    private func toggleDrag(at at: CGPoint? = nil) {
+        guard let p = at ?? CGEvent(source: nil)?.location else { return }
         dragging.toggle()
         post(dragging ? .leftMouseDown : .leftMouseUp, at: p)
-        KeyHUD.shared.setSticky(dragging ? "Dragging" : "Pointer mode", caption: dragging ? "Move, then V or Space to drop" : Self.help)
+        mouseDrags(dragging)
+        KeyHUD.shared.setSticky(dragging ? "Dragging" : "Pointer mode",
+                                caption: dragging ? "Move with the arrows or the mouse, then V or Space to drop" : Self.help)
+    }
+
+    /// While Learn holds the button down, the real mouse reports plain moves (its button is up): turn them into
+    /// drags so the mouse can drag too.
+    private var dragTap: CFMachPort?
+    private func mouseDrags(_ on: Bool) {
+        if on, dragTap == nil {
+            dragTap = CGEvent.tapCreate(tap: .cgSessionEventTap, place: .headInsertEventTap, options: .defaultTap,
+                                        eventsOfInterest: 1 << CGEventType.mouseMoved.rawValue, callback: { _, type, e, _ in
+                if type == .mouseMoved, e.getIntegerValueField(.eventSourceUnixProcessID) != Int64(getpid()) { e.type = .leftMouseDragged }
+                return Unmanaged.passUnretained(e)
+            }, userInfo: nil)
+            if let dragTap { CFRunLoopAddSource(CFRunLoopGetMain(), CFMachPortCreateRunLoopSource(nil, dragTap, 0), .commonModes) }
+        }
+        if let dragTap { CGEvent.tapEnable(tap: dragTap, enable: on) }
     }
 
     private func post(_ type: CGEventType, at p: CGPoint, button: CGMouseButton = .left, clicks: Int = 1) {

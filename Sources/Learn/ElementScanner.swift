@@ -5,7 +5,7 @@ struct ScreenElement {
     let ref: AXUIElement
     let role: String
     let roleName: String   // "Button", "Row", …
-    let text: String       // what it says ("" for unlabeled icons)
+    var text: String       // what it says ("" for unlabeled icons)
     let frame: CGRect      // AX global coords (top-left origin)
     var web = false        // inside an AXWebArea (Electron apps, browsers): AX press is unreliable → real click
 
@@ -29,7 +29,7 @@ enum ElementScanner {
     private static let editable: Set<String> = ["AXTextField", "AXTextArea", "AXComboBox"]
     private static let attrs = [
         kAXRoleAttribute, kAXSubroleAttribute, kAXTitleAttribute, kAXDescriptionAttribute, kAXValueAttribute,
-        kAXChildrenAttribute, kAXPositionAttribute, kAXSizeAttribute, kAXPlaceholderValueAttribute,
+        kAXChildrenAttribute, kAXPositionAttribute, kAXSizeAttribute, kAXPlaceholderValueAttribute, kAXHelpAttribute,
     ] as CFArray
 
     /// Focused window first, then other visible windows. Stops at `budget` seconds / `limit` nodes.
@@ -59,13 +59,67 @@ enum ElementScanner {
         return out
     }
 
+    /// Label mode: every visible window on every display (other apps' too), front to back, minus what's hidden behind
+    /// a window in front. Windows scan in parallel.
+    static func scanVisible() -> [ScreenElement] {
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let wins: [(pid: pid_t, frame: CGRect)] = list.compactMap { w in
+            guard let pid = w[kCGWindowOwnerPID as String] as? pid_t, pid != getpid(), (w[kCGWindowLayer as String] as? Int) == 0,
+                  (w[kCGWindowAlpha as String] as? Double ?? 1) > 0, let b = w[kCGWindowBounds as String] as? NSDictionary,
+                  let f = CGRect(dictionaryRepresentation: b), f.width > 60, f.height > 60 else { return nil }
+            return (pid, f)   // CG window bounds: top-left origin, same as AX
+        }.prefix(12).map { $0 }
+        var found = [[ScreenElement]](repeating: [], count: wins.count)
+        let lock = NSLock()
+        DispatchQueue.concurrentPerform(iterations: wins.count) { i in
+            guard let w = axWindow(pid: wins[i].pid, frame: wins[i].frame) else { return }
+            let els = scan(pid: wins[i].pid, only: w)
+            lock.lock(); found[i] = els; lock.unlock()
+        }
+        return unhidden(Array(zip(wins.map(\.frame), found)))
+    }
+
+    /// The app's AX window at `frame` (a CG window's bounds). Electron lists no windows, only its focused / main one.
+    /// ponytail: a 2nd unfocused Electron window stays unlabeled; element-at-point lookup if that matters.
+    static func axWindow(pid: pid_t, frame f: CGRect) -> AXUIElement? {
+        let app = AXUIElementCreateApplication(pid)
+        let axWins = ((value(app, kAXWindowsAttribute) as [AXUIElement]?) ?? [])
+            + [kAXFocusedWindowAttribute, kAXMainWindowAttribute].compactMap { value(app, $0) as AXUIElement? }
+        return axWins.first { frame($0).map { abs($0.minX - f.minX) < 2 && abs($0.minY - f.minY) < 2 && abs($0.width - f.width) < 2 } ?? false }
+    }
+
+    /// `layers`: each window's frame and items, front first. An item whose centre is under a window in front is hidden.
+    static func unhidden(_ layers: [(window: CGRect, items: [ScreenElement])]) -> [ScreenElement] {
+        layers.enumerated().flatMap { i, layer in
+            layer.items.filter { e in !layers[..<i].contains { $0.window.contains(CGPoint(x: e.frame.midX, y: e.frame.midY)) } }
+        }
+    }
+
+    /// The keyboard is in editable text in the front app: a field, a text area, a web editor. Asked from Learn's key
+    /// tap, so it gives up after 50 ms (then: not typing).
+    static func typingInText() -> Bool {
+        guard let pid = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return false }
+        let app = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(app, 0.05)
+        guard let el: AXUIElement = value(app, kAXFocusedUIElementAttribute) else { return false }
+        AXUIElementSetMessagingTimeout(el, 0.05)
+        let role: String? = value(el, kAXRoleAttribute)
+        return editable.contains(role ?? "") || (value(el, "AXEditableAncestor") as AXUIElement?) != nil
+    }
+
+    /// Puts the pointer on `e` (a real move, so hover effects fire).
+    static func movePointer(to e: ScreenElement) {
+        CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: CGPoint(x: e.frame.midX, y: e.frame.midY),
+                mouseButton: .left)?.post(tap: .cghidEventTap)
+    }
+
     private static func walk(_ el: AXUIElement, clip: CGRect, depth: Int, inRow: Bool, inWeb: Bool, out: inout [ScreenElement],
                              visited: inout Int, limit: Int, deadline: Date) {
         guard depth < 80, visited < limit, Date() < deadline else { return }   // web apps nest 50+ deep
         visited += 1
         var raw: CFArray?
         guard AXUIElementCopyMultipleAttributeValues(el, attrs, [], &raw) == .success,
-              let v = raw as? [AnyObject], v.count == 9 else { return }
+              let v = raw as? [AnyObject], v.count == 10 else { return }
         let role = v[0] as? String ?? ""
         let inWeb = inWeb || role == "AXWebArea"
         let f = rect(v[6], v[7])
@@ -77,13 +131,17 @@ enum ElementScanner {
         let kids = v[5] as? [AXUIElement] ?? []
         var name = roles[role]
         if role == "AXImage", let t = v[2] as? String, !t.isEmpty, hasPress(el) { name = "Icon" }
+        // Any other leaf (text, image, a web div…) may react to a click too — nothing in AX proves it won't. Containers are
+        // left out: a click there lands on a child, listed already.
+        if name == nil, kids.isEmpty, !inRow { name = role == "AXStaticText" ? "Text" : String(role.dropFirst(2)) }
         if inRow && role == "AXCell" { name = nil }   // the row already covers its cells
-        if let name, let f, f.width > 3, f.height > 3 {
-            var text = [v[2], v[3], v[8]].compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
+        if let name, let f, max(f.width, f.height) > 3, min(f.width, f.height) > 0 {   // thin web sliders are 3px tall
+            var text = [v[2], v[3], v[8], v[9]].compactMap { ($0 as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .first { !$0.isEmpty } ?? ""
             if editable.contains(role) { text = fieldText(el, frame: f, label: text, hint: v[8] as? String, value: v[4] as? String) }
             else if text.isEmpty, let s = v[4] as? String { text = s }
             if text.isEmpty, role == "AXRow" || role == "AXCell" || role == "AXLink" { text = innerText(el, depth: 0) }
+            else if text.isEmpty, roles[role] != nil { text = labelBefore(el) ?? "" }   // a settings row's switch / slider
             let sub = v[1] as? String
             out.append(ScreenElement(ref: el, role: role, roleName: sub == "AXSearchField" ? "Search Field" : name,
                                      text: String(text.prefix(80)), frame: f.intersection(clip), web: inWeb))
@@ -195,13 +253,27 @@ enum ElementScanner {
         return nil
     }
 
+    /// The text before a nameless control, or before one of its 3 nearest wrappers (Obsidian: name ▸ wrapper ▸ switch).
+    private static func labelBefore(_ el: AXUIElement) -> String? {
+        var node = el
+        for _ in 0..<3 {
+            if let t = precedingText(node) { return t }
+            guard let p: AXUIElement = value(node, kAXParentAttribute) else { return nil }
+            node = p
+        }
+        return nil
+    }
+
     private static func precedingText(_ el: AXUIElement) -> String? {
         guard let parent: AXUIElement = value(el, kAXParentAttribute) else { return nil }
         let sibs: [AXUIElement] = value(parent, kAXChildrenAttribute) ?? []
         guard let i = sibs.firstIndex(where: { CFEqual($0, el) }) else { return nil }
         for s in sibs[..<i].reversed().prefix(3) {
             if (value(s, kAXRoleAttribute) as String?) == "AXStaticText", let t = value(s, kAXValueAttribute) as String?,
-               !t.trimmingCharacters(in: .whitespaces).isEmpty { return t }
+               !t.trimmingCharacters(in: .whitespaces).isEmpty {
+                if Double(t.trimmingCharacters(in: .whitespaces)) != nil { continue }   // a slider's value readout, not its name
+                return t
+            }
             let inner = innerText(s, depth: 2)
             if !inner.isEmpty { return inner }
         }
@@ -247,7 +319,7 @@ enum ElementScanner {
         if e.web {
             DispatchQueue.global(qos: .userInteractive).async {
                 bringToFront(e)
-                click(at: CGPoint(x: e.frame.midX, y: e.frame.midY))
+                if !pressedToggle(e) { click(at: clickPoint(e)) }
             }
             return
         }
@@ -258,6 +330,24 @@ enum ElementScanner {
         if e.role == "AXRow" || e.role == "AXCell",
            AXUIElementSetAttributeValue(e.ref, kAXSelectedAttribute as CFString, kCFBooleanTrue) == .success { return }
         click(at: CGPoint(x: e.frame.midX, y: e.frame.midY))
+    }
+
+    /// Web switches and checkboxes: an AX press, kept only if their value really flipped (a real click on Obsidian's
+    /// hidden <input> does nothing).
+    private static func pressedToggle(_ e: ScreenElement) -> Bool {
+        guard e.role == "AXCheckBox", hasPress(e.ref) else { return false }
+        let before: NSNumber? = value(e.ref, kAXValueAttribute)
+        guard AXUIElementPerformAction(e.ref, kAXPressAction as CFString) == .success else { return false }
+        usleep(100_000)
+        let after: NSNumber? = value(e.ref, kAXValueAttribute)
+        return before != nil && after != before
+    }
+
+    /// Where a real click goes: a checkbox's small wrapper (the visible switch) over the checkbox itself.
+    private static func clickPoint(_ e: ScreenElement) -> CGPoint {
+        if e.role == "AXCheckBox", let p: AXUIElement = value(e.ref, kAXParentAttribute), let pf = frame(p),
+           pf.contains(e.frame), pf.width * pf.height <= 4 * e.frame.width * e.frame.height { return CGPoint(x: pf.midX, y: pf.midY) }
+        return CGPoint(x: e.frame.midX, y: e.frame.midY)
     }
 
     /// Opens the element's context menu: its own AXShowMenu action, else a real right-click at its centre.
@@ -375,6 +465,7 @@ enum ElementScanner {
         var pid: pid_t = 0
         AXUIElementGetPid(e.ref, &pid)
         func front() -> Bool { NSWorkspace.shared.frontmostApplication?.processIdentifier == pid }
+        if let w: AXUIElement = value(e.ref, kAXWindowAttribute) { AXUIElementPerformAction(w, kAXRaiseAction as CFString) }   // its window, not just the app's
         guard !front(), let app = NSRunningApplication(processIdentifier: pid) else { Debug.log("bringToFront: already front"); return }
         DispatchQueue.main.async { app.activate() }
         for _ in 0..<20 where !front() { usleep(50_000) }

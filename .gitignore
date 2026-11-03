@@ -23,3 +23,6 @@ brag-output*/
 
 # README media
 !docs/*.mp4
+
+# Quality-gate tool output (crapper / dryer / mutator)
+.metrics/
