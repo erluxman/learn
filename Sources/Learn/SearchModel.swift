@@ -246,6 +246,7 @@ final class SearchModel: ObservableObject {
             fileSearch.search(query)
             results += files.prefix(40).map(Hit.file)
         }
+        if !query.isEmpty { results = promotePicked(results) }
         if !keepSelection || selection >= count { selection = 0 }
         updateHighlight()
     }
@@ -267,6 +268,63 @@ final class SearchModel: ObservableObject {
             out.append(ownRows[i].0); i += 1
         }
         return out
+    }
+
+    // MARK: Picked for this query
+
+    /// What `PickStore` remembers a row by. This app's own rows carry the app, so a pick in Brave doesn't lift
+    /// the same menu item in Chrome. Answers aren't remembered: they change with every query.
+    private func pickKey(_ hit: Hit) -> String? {
+        switch hit {
+        case .answer: nil
+        case .shortcut(let s): currentApp.map { "shortcut:" + $0.id + "|" + s.id }
+        default: hit.id
+        }
+    }
+
+    /// The row last picked for this query goes first, like Spotlight ("scree" → the app you chose over Screenshot),
+    /// after a calculation or conversion. An app or another app's shortcut that no longer matches the query
+    /// (the query was a nickname) is brought back.
+    private func promotePicked(_ list: [Hit]) -> [Hit] {
+        let picked = PickStore.shared.picks(for: query)
+        guard !picked.isEmpty else { return list }
+        let keys = list.map(pickKey)
+        for key in picked {
+            var out = list
+            let hit: Hit
+            if let i = keys.firstIndex(of: key) { hit = out.remove(at: i) }
+            else if let h = pickedHit(key) { hit = h }
+            else { continue }
+            out.insert(hit, at: out.prefix(while: Self.isInstantAnswer).count)
+            return out
+        }
+        return list
+    }
+
+    private static func isInstantAnswer(_ hit: Hit) -> Bool {
+        if case .answer(let a) = hit { return a.kind != .define }
+        return false
+    }
+
+    /// A remembered app or other app's shortcut that isn't in the results. Nil inside "only on screen".
+    private func pickedHit(_ key: String) -> Hit? {
+        guard !screenOnly else { return nil }
+        if key.hasPrefix("app:") {
+            let id = String(key.dropFirst(4))
+            guard id != currentApp?.id else { return nil }
+            if id == Self.settingsEntry.id { return .app(Self.settingsEntry) }
+            return allApps.first { $0.id == id }.map(Hit.app)
+        }
+        if key.hasPrefix("global:") {
+            return globalIndex.first { $0.app.id != currentApp?.id && Hit.global($0.shortcut, $0.app).id == key }
+                .map { Hit.global($0.shortcut, $0.app) }
+        }
+        return nil
+    }
+
+    private func rememberPick(_ hit: Hit) {
+        guard !query.isEmpty, let key = pickKey(hit) else { return }
+        PickStore.shared.record(query: query, key: key)
     }
 
     /// Nothing typed in an app: search only its on-screen items (⎋ / ⌫ go back). False when it doesn't apply.
@@ -481,6 +539,7 @@ final class SearchModel: ObservableObject {
     func activate(_ index: Int? = nil, alt: Bool = false) {
         if let index { selection = index }
         guard selection < count else { return }
+        rememberPick(results[selection])
         if let app = currentApp, let s = selectedShortcut {
             if app != Self.settingsEntry { UsageStore.shared.record(app: app.id, path: s.path) }
             if app == Self.settingsEntry {   // Learn's own settings: go there; press visible controls off main
@@ -545,6 +604,7 @@ final class SearchModel: ObservableObject {
     /// ⇥ on an app row: show that app's shortcuts instead of opening it. False when the row isn't an app.
     func drillIn() -> Bool {
         guard selection < count, case .app(let a) = results[selection] else { return false }
+        rememberPick(results[selection])
         open(a)
         return true
     }

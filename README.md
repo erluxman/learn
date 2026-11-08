@@ -41,6 +41,7 @@ Press **⌥Space** (or take over **⌘Space**) in any app and start typing.
 - **Shortcut bubble.** Shows the keys you press and their command names on screen, which is handy for learning shortcuts, screencasts and demos.
 - **Keyboard pointer.** ⌥⇧Space moves the mouse with the keys: click, right-click, drag and scroll.
 - **Frequently used and suggested.** Learn remembers what you run and ranks the useful commands of each app first.
+- **Remembers your picks.** Like Spotlight, the result you chose for a search comes first the next time you type it (or the start of it).
 - **Liquid Glass look.** It looks like Spotlight by default. Glass, color, grain, fonts and sounds are all customizable.
 - **Cleaner.** A built-in Smart Care, Cleanup, Protection and Performance overview of your Mac. It scans only and never deletes anything on its own.
 
