@@ -26,6 +26,20 @@ Skip an expert only if clearly irrelevant to the work, and say why.
 7. Code quality & tests - design, simplicity, naming; tests that would fail if the code broke; CI green.
 8. Verified evidence & ops - run in the real app (screenshots/GIF, test counts, benchmarks); logs, rollback, docs.
 
+### How every score is derived (mandatory - no unexplained numbers)
+- Start at 10 and deduct. Each deduction names one concrete problem, its evidence (file:line, screenshot,
+  measurement, repro steps, or competitor comparison) and its size. Show the math, e.g.
+  "10 - 2 (export fails silently on disk full, repro: ...) - 1 (no loading state, shot-3.png) = 7".
+- Deduction sizes: blocker / core path broken -3 to -5; major, user-visible on a common path -1.5 to -2;
+  minor, edge case or polish -0.5 to -1; nit -0.25. No deduction without evidence; no 10 without proof
+  it is exemplary and at least equal to the best competitor.
+- Anything not checked is marked "unverified": verify it, or mark the score provisional. Never guess.
+- Each expert states a confidence (high / medium / low) and what would raise it.
+- Each expert gives a "Path to 10": one step per deduction, in order of impact, each with
+  (a) the concrete change (what and where), (b) points recovered, (c) how to verify it is done
+  (test, measurement or acceptance condition), (d) effort S / M / L.
+  The points recovered must add up to 10 minus the score.
+
 ### Scoring rules
 - Target is 9+. Anchors: 10 exemplary; 9 ship-ready, at or above best-in-class; 7-8 solid, minor gaps;
   5-6 works with notable debt; 3-4 significant defects; 1-2 broken.
@@ -42,11 +56,13 @@ Skip an expert only if clearly irrelevant to the work, and say why.
 ### Output
 1. Header: what was rated, competitor, personas, round number.
 2. Scoreboard table: parameter | score | competitor score | lowest-scoring expert + one-line reason.
-3. Panel table: expert | score | top finding.
+3. Panel table: expert | score | confidence | deductions with evidence (the math).
+   Then each expert's "Path to 10" steps (change, points recovered, how to verify, effort).
 4. Gates: pass/fail each. Then Overall /10 (with trail on re-rates).
 5. Checklist met / missing (with file:line).
-6. "To reach 9" - most important first, each with cause and concrete fix.
+6. Combined roadmap: merge and de-duplicate all experts' steps into "current -> 9 -> 10", ordered by
+   points gained per effort; mark which steps are needed to reach 9 and which to reach 10.
 7. Gaps vs competitor, corner cases, manual test checklist I can run.
 8. Not verified list, then a one-sentence verdict.
 For multi-feature reviews, also publish an HTML artifact dashboard (bands 9+/8/6-7/4-5/<4, priority filter).
-Offer to file a "Follow-ups to reach 9" GitHub issue.
+Offer to file a "Path to 10" GitHub issue with these steps as its checklist.
